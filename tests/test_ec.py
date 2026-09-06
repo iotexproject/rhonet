@@ -6,7 +6,7 @@ import sys
 import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from rhoswarm import ec, merkle  # noqa: E402
+from rhowalkers import ec, merkle  # noqa: E402
 
 HERE = os.path.dirname(__file__)
 

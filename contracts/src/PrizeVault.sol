@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-/// @title PrizeVault - one round's prize pool and credit ledger (RhoSwarm MVP)
+/// @title PrizeVault - one round's prize pool and credit ledger (RhoWalkers MVP)
 /// @notice Minimal settlement contract for the "one unit of work = one credit" scheme.
 ///   - The operator pre-funds the pool in an ERC-20 (USDC on an L2).
 ///   - Every epoch the coordinator posts the Merkle root of (payout address, credited steps).
@@ -10,7 +10,7 @@ pragma solidity ^0.8.24;
 ///     total credited steps. Miners claim pool * mine / total with a Merkle proof.
 ///   - If the round is aborted (external solve, timeout, coordinator silence) the operator
 ///     calls `refund` and the depositor takes the pool back; credits stay recorded.
-///   Leaf and node hashing match rhoswarm/merkle.py: leaf = sha256(addr20 || uint256 steps),
+///   Leaf and node hashing match rhowalkers/merkle.py: leaf = sha256(addr20 || uint256 steps),
 ///   node = sha256(min || max).
 interface IERC20 {
     function transfer(address to, uint256 amount) external returns (bool);

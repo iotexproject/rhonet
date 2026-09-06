@@ -1,4 +1,4 @@
-"""RhoSwarm coordinator (v1: single operator).
+"""RhoWalkers coordinator (v1: single operator).
 
 Responsibilities, in the order a DP passes through them:
   admission  -> curve-native ticket replayed once per identity, slow-start quota
@@ -352,7 +352,7 @@ def build_app(coord: Coordinator) -> FastAPI:
         threading.Thread(target=_epoch_loop, args=(coord,), daemon=True).start()
         yield
 
-    app = FastAPI(title="RhoSwarm coordinator", version="0.1", lifespan=lifespan)
+    app = FastAPI(title="RhoWalkers coordinator", version="0.1", lifespan=lifespan)
 
     @app.get("/")
     def index():

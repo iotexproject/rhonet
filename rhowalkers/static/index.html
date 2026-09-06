@@ -1,4 +1,4 @@
-<title>RhoSwarm Coordinator</title>
+<title>RhoWalkers Coordinator</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>
@@ -67,7 +67,7 @@ footer{color:var(--muted);font-size:12px}
 
 <main>
   <header>
-    <h1 id="title">RhoSwarm</h1>
+    <h1 id="title">RhoWalkers</h1>
     <span id="status" class="pill open">open</span>
     <span class="sub" id="curve"></span>
   </header>
@@ -97,7 +97,7 @@ footer{color:var(--muted);font-size:12px}
       <div class="tbl"><table id="miners"><thead><tr>
         <th>Identity</th><th>Status</th><th class="r">DPs</th><th class="r">Credits</th><th class="r">Share</th><th class="r">Replayed</th><th class="r">Rejected</th>
       </tr></thead><tbody></tbody></table></div>
-      <div class="empty" id="miners-empty">No miner admitted yet. Run <code class="mono">python -m rhoswarm.miner</code>.</div>
+      <div class="empty" id="miners-empty">No miner admitted yet. Run <code class="mono">python -m rhowalkers.miner</code>.</div>
     </section>
     <div style="display:grid;gap:20px;align-content:start">
       <section class="panel">
@@ -145,7 +145,7 @@ function drawSpark() {
 async function tick() {
   const [s, miners, epochs, events] = await Promise.all(["/api/status","/api/miners","/api/epochs","/api/events"].map(u => fetch(u).then(r => r.json())));
   const R = s.round, unit = 2 ** R.credit_unit_log2;
-  document.title = `${R.round_id} · RhoSwarm`;
+  document.title = `${R.round_id} · RhoWalkers`;
   $("#title").textContent = R.round_id;
   $("#status").textContent = s.status; $("#status").className = "pill " + s.status;
   $("#curve").textContent = `${R.bits}-bit prime-order curve · Pollard rho, r=${R.r} adding walk · DP = ${R.w} trailing zero bits · 1 credit = 2^${R.credit_unit_log2} steps · prize ${R.prize_pool_usdc.toLocaleString()} USDC`;

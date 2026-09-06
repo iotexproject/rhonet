@@ -1,7 +1,7 @@
-"""RhoSwarm miner: Ed25519 identity -> curve-native ticket -> N worker processes
+"""RhoWalkers miner: Ed25519 identity -> curve-native ticket -> N worker processes
 running batched rho walks -> signed DP batches every few seconds.
 
-    python -m rhoswarm.miner --coordinator http://127.0.0.1:8642 --procs 4 --payout 0x...
+    python -m rhowalkers.miner --coordinator http://127.0.0.1:8642 --procs 4 --payout 0x...
 
 --cheat submits fabricated DPs (valid-looking points with made-up coefficients)
 to demonstrate that the coordinator's deterministic spot check catches and slashes it.

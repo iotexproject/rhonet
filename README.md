@@ -1,4 +1,4 @@
-# RhoSwarm
+# RhoWalkers
 
 A community-owned compute network for public elliptic-curve discrete-log challenges
 (Certicom ECCp-109/131, Bitcoin puzzle #135). Anyone with a GPU points it at a round,
@@ -8,9 +8,9 @@ This repository is the **MVP**: the whole protocol end to end on a toy curve, in
 so every design decision can be exercised before a single GPU kernel is written.
 
 ```
-python -m rhoswarm.gencurve --bits 56 --out rounds/r56.json     # a 56-bit prime-order curve + secret k
-python -m rhoswarm.coordinator --round rounds/r56.json          # http://127.0.0.1:8642
-python -m rhoswarm.miner --procs 4 --payout 0x<your address>    # mint a ticket, walk, submit DPs
+python -m rhowalkers.gencurve --bits 56 --out rounds/r56.json     # a 56-bit prime-order curve + secret k
+python -m rhowalkers.coordinator --round rounds/r56.json          # http://127.0.0.1:8642
+python -m rhowalkers.miner --procs 4 --payout 0x<your address>    # mint a ticket, walk, submit DPs
 ./demo.sh                                                       # all of the above + 3 honest miners + 1 cheater
 ```
 
@@ -32,12 +32,12 @@ python -m rhoswarm.miner --procs 4 --payout 0x<your address>    # mint a ticket,
 ## Layout
 
 ```
-rhoswarm/ec.py           curve arithmetic, walks, PRF starts, tickets, replay, collision solve
-rhoswarm/merkle.py       sha256 Merkle tree (mirrors PrizeVault.sol)
-rhoswarm/gencurve.py     random prime-order curve by BSGS point counting (<= ~64 bits)
-rhoswarm/coordinator.py  FastAPI + sqlite: admission, intake, spot checks, ledger, epochs, API
-rhoswarm/miner.py        identity, ticket, N worker processes, signed batches, --cheat mode
-rhoswarm/static/         dashboard
+rhowalkers/ec.py           curve arithmetic, walks, PRF starts, tickets, replay, collision solve
+rhowalkers/merkle.py       sha256 Merkle tree (mirrors PrizeVault.sol)
+rhowalkers/gencurve.py     random prime-order curve by BSGS point counting (<= ~64 bits)
+rhowalkers/coordinator.py  FastAPI + sqlite: admission, intake, spot checks, ledger, epochs, API
+rhowalkers/miner.py        identity, ticket, N worker processes, signed batches, --cheat mode
+rhowalkers/static/         dashboard
 contracts/               PrizeVault.sol + forge tests (forge test)
 tests/test_ec.py         offline math checks (python tests/test_ec.py)
 demo.sh                  end-to-end run

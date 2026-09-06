@@ -6,7 +6,7 @@ A walker is one Pollard rho path on a curve. RhoWalkers is a crowd of them: anyo
 GPU points it at a round, wanders the curve, and when any two walkers collide the whole crowd
 is paid pro rata for the work it actually did.
 
-Site: https://iotexproject.github.io/rhowalkers · Status: **MVP, protocol runs end to end on toy curves**
+Site: https://rhowalkers.pages.dev (mirror: https://iotexproject.github.io/rhowalkers) · Status: **MVP, protocol runs end to end on toy curves**
 
 ---
 

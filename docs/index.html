@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>RhoWalkers</title>
+<meta name="description" content="A crowd of Pollard rho walkers solving public elliptic-curve challenges together. Verified work, one credit per unit of work, pro-rata settlement on Ethereum L2.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Serif:ital,wght@0,400;1,400&display=swap">
+<style>
+:root{--bg:#f2f4f6;--panel:#fff;--ink:#16202a;--muted:#5b6b78;--line:#d7dde3;--accent:#0f6e73;--accent-soft:#d6ecec;--bad:#b23a48;--good:#2f7d4f;
+  --mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;--sans:"IBM Plex Sans",system-ui,sans-serif;--serif:"IBM Plex Serif",Georgia,serif}
+@media (prefers-color-scheme:dark){:root{--bg:#0e1418;--panel:#161e24;--ink:#e6ebee;--muted:#8fa0ac;--line:#26323b;--accent:#3fbfc4;--accent-soft:#12383b;--bad:#e26b78;--good:#5fbf85}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:16px;line-height:1.55}
+main{max-width:960px;margin:0 auto;padding:48px 24px 80px}
+nav{display:flex;justify-content:space-between;align-items:baseline;gap:16px;margin-bottom:56px}
+nav .brand{font-weight:600;letter-spacing:-.01em}
+nav a{color:var(--accent);text-decoration:none;font-size:14px;margin-left:18px}
+h1{font-family:var(--serif);font-weight:400;font-size:clamp(30px,5vw,48px);line-height:1.15;margin:0 0 18px;letter-spacing:-.01em;text-wrap:balance;max-width:20ch}
+.lede{font-size:19px;color:var(--muted);max-width:60ch;margin:0 0 28px}
+.walk{width:100%;height:120px;display:block;margin:8px 0 40px;border:1px solid var(--line);border-radius:6px;background:var(--panel)}
+h2{font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:.09em;color:var(--muted);margin:56px 0 14px}
+h3{font-size:17px;font-weight:600;margin:0 0 6px}
+p{max-width:66ch;margin:0 0 14px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:18px 20px}
+.card p{font-size:15px;color:var(--muted);margin:0}
+.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+pre{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:16px 18px;font-family:var(--mono);font-size:13.5px;overflow-x:auto;line-height:1.5}
+table{width:100%;border-collapse:collapse;font-size:15px;background:var(--panel);border:1px solid var(--line);border-radius:6px;overflow:hidden}
+th{text-align:left;font-weight:500;color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.05em;padding:10px 14px;border-bottom:1px solid var(--line)}
+td{padding:10px 14px;border-bottom:1px solid var(--line);vertical-align:top}
+tr:last-child td{border-bottom:0}
+td.r,th.r{text-align:right}
+.tbl{overflow-x:auto}
+.shot{border:1px solid var(--line);border-radius:6px;overflow:hidden;background:var(--panel)}
+.shot img{display:block;width:100%;max-width:100%}
+.cap{font-size:13px;color:var(--muted);margin-top:8px}
+.tag{display:inline-block;font-size:12px;font-weight:600;padding:2px 9px;border-radius:999px;background:var(--accent-soft);color:var(--accent);vertical-align:middle;margin-left:8px}
+ol{padding-left:20px;max-width:66ch}
+ol li{margin-bottom:8px}
+footer{margin-top:64px;color:var(--muted);font-size:13px;border-top:1px solid var(--line);padding-top:18px}
+footer a{color:var(--accent)}
+.cta{display:inline-block;background:var(--accent);color:#fff;text-decoration:none;padding:10px 18px;border-radius:5px;font-weight:500;margin-right:12px}
+.cta.alt{background:transparent;color:var(--accent);border:1px solid var(--accent)}
+@media (prefers-reduced-motion:reduce){.walk{display:none}}
+</style>
+</head>
+<body>
+<main>
+<nav><span class="brand">RhoWalkers</span><span><a href="#how">How it works</a><a href="#demo">Demo</a><a href="#ladder">The ladder</a><a href="https://github.com/iotexproject/rhowalkers">GitHub</a></span></nav>
+
+<h1>A crowd of walkers on a curve, paid the moment two of them collide.</h1>
+<p class="lede">RhoWalkers is a mining pool for cryptanalysis. Anyone with a GPU runs Pollard rho against a public elliptic-curve challenge, every unit of verified work mints one credit, and the prize is split once, pro rata, when the round is solved.</p>
+<p><a class="cta" href="https://github.com/iotexproject/rhowalkers">Read the code</a><a class="cta alt" href="https://github.com/iotexproject/rhowalkers#run-it">Run the demo</a></p>
+<canvas class="walk" id="walk" aria-hidden="true"></canvas>
+
+<h2>Why nobody has done this</h2>
+<div class="grid">
+  <div class="card"><h3>The trust cliff</h3><p>Whoever coordinates sees the collision first and holds the key. Volunteers have no reason to believe they will be paid, so they never show up.</p></div>
+  <div class="card"><h3>Cheating is free</h3><p>A distinguished point is 24 bytes. Forging one costs nothing unless someone replays the walk that produced it, and nobody has been replaying.</p></div>
+  <div class="card"><h3>Paid only at the end</h3><p>A round can run for months. Whoever leaves early has historically gotten nothing, so the crowd thins exactly when it is needed.</p></div>
+</div>
+
+<h2 id="how">How it works</h2>
+<div class="grid">
+  <div class="card"><h3>One unit of work, one credit</h3><p>A distinguished point with <span class="mono">w</span> trailing zero bits stands for <span class="mono">2<sup>w</sup></span> expected steps. One credit is <span class="mono">2<sup>30</sup></span> verified steps. No block reward, no halving, no treasury, no vote.</p></div>
+  <div class="card"><h3>Nobody issues seeds</h3><p>A walker starts at <span class="mono">PRF(round, pubkey, t)</span>. Anyone can recompute any walk from public data, so the coordinator keeps no per-miner state and an auditor can re-verify offline.</p></div>
+  <div class="card"><h3>Admission is the same kernel</h3><p>A ticket is a walk until <span class="mono">x</span> has <span class="mono">d</span> trailing zero bits. Seconds on a weak device, replayed once, and no edge for botnets or ASICs over an honest GPU.</p></div>
+  <div class="card"><h3>Replay, not proof</h3><p>A deterministic 1 in N segments are walked again from their start. A forger cannot know which. One failure slashes the identity. This beats proving every step by a factor of 10<sup>5</sup>.</p></div>
+  <div class="card"><h3>Pull-based settlement</h3><p>Each epoch the coordinator posts one Merkle root of (address, credited steps) to a vault on an Ethereum L2. After the solve, every miner sends one <span class="mono">claim(steps, proof)</span>.</p></div>
+  <div class="card"><h3>Refund on abort</h3><p>External solve, timeout, or coordinator silence returns the pre-funded pool to its depositor. Credits stay recorded; nobody's work is silently repriced.</p></div>
+</div>
+
+<h2 id="demo">The MVP, end to end</h2>
+<p>Everything above runs today in Python on toy curves. A 56-bit round on one laptop: three honest miners with 3, 2 and 1 processes, one cheater submitting real-looking points with invented coefficients.</p>
+<div class="tbl"><table>
+<tr><th>Expected work</th><td class="mono">3.1e8 steps (1.25·√n)</td></tr>
+<tr><th>Solved after</th><td>74% of expected, about 100 seconds, <span class="mono">k</span> verified against the generator's secret</td></tr>
+<tr><th>Payouts</th><td class="mono">46.2% / 35.2% / 18.6%</td></tr>
+<tr><th>Cheater</th><td>slashed on the first replayed segment, credits zeroed, key blocked</td></tr>
+<tr><th>Replays</th><td class="mono">191 of 14,060 segments (1 in 64), 0 false positives</td></tr>
+<tr><th>Ledger</th><td>7 epoch roots; proofs verify in Python and inside the Solidity vault</td></tr>
+</table></div>
+<div class="shot" style="margin-top:18px"><img src="dashboard.png" alt="Coordinator dashboard after a solved 56-bit round: solution, payouts, progress meter, miners, epoch roots, events"></div>
+<p class="cap">The coordinator dashboard after the round above.</p>
+<pre>python3 -m venv .venv &amp;&amp; .venv/bin/pip install fastapi 'uvicorn[standard]' cryptography httpx
+./demo.sh                     # 56-bit round, coordinator, 3 honest miners + 1 cheater
+open http://127.0.0.1:8642    # dashboard</pre>
+
+<h2 id="ladder">The ladder</h2>
+<div class="tbl"><table>
+<thead><tr><th>Target</th><th class="r">Steps</th><th>Prize</th><th>1,000 RTX 5090</th><th>Status</th></tr></thead>
+<tr><td>Certicom ECCp-109</td><td class="r mono">2.3e16</td><td>solved 2002</td><td>minutes</td><td>calibration rerun</td></tr>
+<tr><td>Certicom ECCp-131</td><td class="r mono">4.5e19</td><td>$20,000, open since 1997</td><td>~18 days</td><td>first public round</td></tr>
+<tr><td>Bitcoin puzzle #135</td><td class="r mono">1.8e20</td><td>13.5 BTC, bearer</td><td>~70 days</td><td>needs threshold solve</td></tr>
+<tr><td>Certicom ECCp-163</td><td class="r mono">3e24</td><td>$30,000</td><td>~13,000 years</td><td>out of reach</td></tr>
+</table></div>
+<p style="margin-top:14px">Every rung is a rung of the same ladder: same walk, same tickets, same credit, same vault. Solving 131 bits says nothing about P-256; the gap is 2<sup>62</sup>. This is a way to organize a crowd, not a threat to anyone's wallet.</p>
+
+<h2>Roadmap</h2>
+<ol>
+<li>Pre-mine 60–80 bit rounds on the MVP to shake out the protocol.<span class="tag">now</span></li>
+<li>GPU kernel for the 131-bit field with negation map and look-ahead. Gate: measured throughput on real hardware.</li>
+<li>ECCp-109 rerun, closed then open, to calibrate quotas, replay rate and epoch length.</li>
+<li>ECCp-131 with a USDC pool in the vault plus the Certicom prize claimed by a legal entity and distributed through the same root.</li>
+<li>v2 coordinator: staked committee, each member running its own intake bucket.</li>
+<li>Puzzle #135 only when the collision can be resolved without any single party learning <span class="mono">k</span> first.</li>
+</ol>
+
+<footer>MIT licensed. <a href="https://github.com/iotexproject/rhowalkers">github.com/iotexproject/rhowalkers</a></footer>
+</main>
+<script>
+// a handful of random walks that end when two of them meet: the whole idea in one strip
+(() => {
+  const c = document.getElementById("walk"); if (!c) return;
+  const ctx = c.getContext("2d"), dpr = devicePixelRatio || 1;
+  const col = () => getComputedStyle(document.documentElement).getPropertyValue("--accent").trim();
+  const bad = () => getComputedStyle(document.documentElement).getPropertyValue("--bad").trim();
+  let W, H, walkers, t, hit;
+  function reset() {
+    W = c.width = c.clientWidth * dpr; H = c.height = 120 * dpr;
+    ctx.clearRect(0, 0, W, H);
+    walkers = Array.from({length: 9}, (_, i) => ({x: 10 * dpr, y: (12 + i * 12) * dpr + Math.random() * 6 * dpr, v: (Math.random() - .5) * 1.4}));
+    t = 0; hit = null;
+  }
+  function frame() {
+    if (hit) { if (++t > 140) reset(); requestAnimationFrame(frame); return; }
+    ctx.strokeStyle = col(); ctx.lineWidth = 1.2 * dpr; ctx.globalAlpha = .75;
+    for (const w of walkers) {
+      ctx.beginPath(); ctx.moveTo(w.x, w.y);
+      w.v += (Math.random() - .5) * .9; w.v *= .9;
+      w.x += 2.2 * dpr; w.y += w.v * dpr * 2;
+      w.y = Math.max(6 * dpr, Math.min(H - 6 * dpr, w.y));
+      ctx.lineTo(w.x, w.y); ctx.stroke();
+    }
+    for (let i = 0; i < walkers.length && !hit; i++) for (let j = i + 1; j < walkers.length; j++)
+      if (Math.abs(walkers[i].y - walkers[j].y) < 1.2 * dpr && walkers[i].x > W * .25) { hit = [i, j]; break; }
+    if (walkers[0].x > W - 10 * dpr) reset();
+    if (hit) {
+      const w = walkers[hit[0]]; ctx.globalAlpha = 1; ctx.fillStyle = bad();
+      ctx.beginPath(); ctx.arc(w.x, w.y, 4 * dpr, 0, 7); ctx.fill();
+    }
+    requestAnimationFrame(frame);
+  }
+  reset(); addEventListener("resize", reset);
+  if (!matchMedia("(prefers-reduced-motion: reduce)").matches) frame();
+})();
+</script>
+</body>
+</html>

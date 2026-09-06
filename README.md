@@ -1,5 +1,8 @@
 # RhoWalkers
 
+A walker is one Pollard rho path on the curve. RhoWalkers is a crowd of them: anyone
+with a GPU wanders the curve, and when two walkers collide, the whole crowd gets paid.
+
 A community-owned compute network for public elliptic-curve discrete-log challenges
 (Certicom ECCp-109/131, Bitcoin puzzle #135). Anyone with a GPU points it at a round,
 runs Pollard rho, and is paid pro rata for verified work when the round is solved.

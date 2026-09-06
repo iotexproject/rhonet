@@ -1,0 +1,25 @@
+{
+  "round_id": "ecc-p44-f00574",
+  "curve": {
+    "p": 12531408179981,
+    "a": 2319616240616,
+    "b": 61828919778,
+    "n": 12531401316229,
+    "gx": 3998146405730,
+    "gy": 7042976031523
+  },
+  "qx": 8525001163227,
+  "qy": 883353655286,
+  "bits": 44,
+  "w": 11,
+  "r": 32,
+  "ticket_d": 15,
+  "credit_unit_log2": 20,
+  "spot_check_rate": 64,
+  "epoch_seconds": 20,
+  "quota_dps_per_epoch_base": 65536,
+  "prize_pool_usdc": 10000.0,
+  "max_walk_len_log2": 16,
+  "expected_steps": 4424964.921511561,
+  "created_at": 1788708202
+}

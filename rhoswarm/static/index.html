@@ -1,0 +1,211 @@
+<title>RhoSwarm Coordinator</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root{
+  --bg:#f2f4f6; --panel:#ffffff; --ink:#16202a; --muted:#5b6b78; --line:#d7dde3;
+  --accent:#0f6e73; --accent-soft:#d6ecec; --warn:#b7791f; --bad:#b23a48; --good:#2f7d4f;
+  --mono:"IBM Plex Mono",ui-monospace,Menlo,monospace; --sans:"IBM Plex Sans",system-ui,-apple-system,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#0e1418; --panel:#161e24; --ink:#e6ebee; --muted:#8fa0ac; --line:#26323b;
+  --accent:#3fbfc4; --accent-soft:#12383b; --warn:#e0a94a; --bad:#e26b78; --good:#5fbf85;
+}}
+:root[data-theme="dark"]{
+  --bg:#0e1418; --panel:#161e24; --ink:#e6ebee; --muted:#8fa0ac; --line:#26323b;
+  --accent:#3fbfc4; --accent-soft:#12383b; --warn:#e0a94a; --bad:#e26b78; --good:#5fbf85;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:14px;line-height:1.45}
+main{max-width:1180px;margin:0 auto;padding:28px 24px 60px;display:grid;gap:20px}
+h1{font-size:22px;font-weight:600;margin:0;letter-spacing:-.01em}
+h2{font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:0 0 10px}
+.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.num{font-family:var(--mono);font-variant-numeric:tabular-nums}
+header{display:flex;flex-wrap:wrap;align-items:baseline;gap:12px 18px}
+header .sub{color:var(--muted)}
+.pill{display:inline-block;padding:2px 10px;border-radius:999px;font-size:12px;font-weight:600;letter-spacing:.04em;text-transform:uppercase}
+.pill.open{background:var(--accent-soft);color:var(--accent)}
+.pill.solved{background:var(--good);color:#fff}
+.pill.aborted{background:var(--bad);color:#fff}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:16px 18px}
+.meter{height:14px;border-radius:3px;background:var(--line);overflow:hidden;position:relative}
+.meter>i{display:block;height:100%;background:var(--accent);width:0;transition:width .6s}
+.meter>b{position:absolute;top:-4px;bottom:-4px;width:2px;background:var(--ink);opacity:.5}
+.meterrow{display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap}
+.meterrow .big{font-size:28px;font-weight:500}
+.note{color:var(--muted);font-size:12.5px;margin-top:8px;max-width:70ch}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(128px,1fr));gap:12px}
+.stat{padding:12px 14px;border:1px solid var(--line);border-radius:6px;background:var(--panel)}
+.stat .l{font-size:11.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+.stat .v{font-size:20px;font-weight:500;margin-top:2px}
+.stat .v small{font-size:12px;color:var(--muted);font-weight:400;margin-left:4px}
+.cols{display:grid;grid-template-columns:minmax(0,3fr) minmax(0,2fr);gap:20px}
+@media (max-width:860px){.cols{grid-template-columns:1fr}}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;font-weight:500;color:var(--muted);font-size:11.5px;text-transform:uppercase;letter-spacing:.05em;padding:6px 8px;border-bottom:1px solid var(--line)}
+td{padding:7px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+td.r,th.r{text-align:right}
+tr:last-child td{border-bottom:0}
+.tbl{overflow-x:auto}
+.tag{font-size:11px;padding:1px 7px;border-radius:3px;font-weight:600}
+.tag.active{background:var(--accent-soft);color:var(--accent)}
+.tag.slashed{background:var(--bad);color:#fff}
+.share{display:inline-block;height:6px;background:var(--accent);border-radius:2px;vertical-align:middle;margin-right:6px}
+.feed{list-style:none;margin:0;padding:0;font-size:12.5px;display:grid;gap:6px;max-height:340px;overflow:auto}
+.feed li{display:grid;grid-template-columns:56px 108px 1fr;gap:8px}
+.feed .k{font-weight:600}
+.feed .k.slashed{color:var(--bad)} .feed .k.solved{color:var(--good)} .feed .k.epoch_closed{color:var(--accent)}
+.feed .t{color:var(--muted)}
+.sol{border-color:var(--good)}
+.sol .k{font-size:15px;word-break:break-all}
+canvas{width:100%;height:56px;display:block}
+.empty{color:var(--muted);font-size:13px}
+a{color:var(--accent)}
+footer{color:var(--muted);font-size:12px}
+</style>
+
+<main>
+  <header>
+    <h1 id="title">RhoSwarm</h1>
+    <span id="status" class="pill open">open</span>
+    <span class="sub" id="curve"></span>
+  </header>
+
+  <section id="solution" class="panel sol" hidden>
+    <h2>Round solved</h2>
+    <div class="mono k" id="sol-k"></div>
+    <div class="note" id="sol-note"></div>
+    <div class="tbl" style="margin-top:12px"><table id="payouts"><thead><tr><th>Payout address</th><th class="r">Credits</th><th class="r">Share</th><th class="r">USDC</th></tr></thead><tbody></tbody></table></div>
+  </section>
+
+  <section class="panel">
+    <div class="meterrow">
+      <div><span class="big num" id="pct">0%</span> <span class="sub">of expected work credited</span></div>
+      <div class="sub num" id="steps"></div>
+    </div>
+    <div class="meter" style="margin-top:10px"><i id="bar"></i><b style="left:100%"></b></div>
+    <div class="note" id="meternote"></div>
+    <canvas id="spark" height="56"></canvas>
+  </section>
+
+  <section class="grid" id="stats"></section>
+
+  <div class="cols">
+    <section class="panel">
+      <h2>Miners</h2>
+      <div class="tbl"><table id="miners"><thead><tr>
+        <th>Identity</th><th>Status</th><th class="r">DPs</th><th class="r">Credits</th><th class="r">Share</th><th class="r">Replayed</th><th class="r">Rejected</th>
+      </tr></thead><tbody></tbody></table></div>
+      <div class="empty" id="miners-empty">No miner admitted yet. Run <code class="mono">python -m rhoswarm.miner</code>.</div>
+    </section>
+    <div style="display:grid;gap:20px;align-content:start">
+      <section class="panel">
+        <h2>Epochs (ledger roots)</h2>
+        <div class="tbl"><table id="epochs"><thead><tr><th>#</th><th>Merkle root</th><th class="r">Credits</th><th class="r">Miners</th></tr></thead><tbody></tbody></table></div>
+        <div class="empty" id="epochs-empty">First epoch closes shortly.</div>
+        <div class="note">Each root is what the coordinator would post to the L2 PrizeVault. A miner claims with a Merkle proof from <code class="mono">/api/proof?payout_addr=…</code>.</div>
+      </section>
+      <section class="panel">
+        <h2>Events</h2>
+        <ul class="feed" id="events"></ul>
+      </section>
+    </div>
+  </div>
+
+  <footer id="foot"></footer>
+</main>
+
+<script>
+const $ = s => document.querySelector(s);
+const fmt = (n, d=1) => { if (n===null||n===undefined) return "–"; const u=["","K","M","G","T","P"]; let i=0; while (Math.abs(n)>=1000 && i<u.length-1){n/=1000;i++} return n.toFixed(i?d:0)+u[i]; };
+const short = h => h.slice(0,10)+"…"+h.slice(-4);
+const ago = ts => { const s=Math.max(0,Date.now()/1000-ts); return s<60? s.toFixed(0)+"s" : s<3600? (s/60).toFixed(0)+"m" : (s/3600).toFixed(1)+"h"; };
+const dur = s => s==null? "–" : s<90? s.toFixed(0)+" s" : s<5400? (s/60).toFixed(0)+" min" : (s/3600).toFixed(1)+" h";
+const hist = [];
+
+function stat(l, v, small) { return `<div class="stat"><div class="l">${l}</div><div class="v num">${v}${small?`<small>${small}</small>`:""}</div></div>`; }
+
+function drawSpark() {
+  const c = $("#spark"), ctx = c.getContext("2d");
+  const W = c.width = c.clientWidth * devicePixelRatio, H = c.height = 56 * devicePixelRatio;
+  ctx.clearRect(0,0,W,H);
+  if (hist.length < 2) return;
+  const max = Math.max(...hist, 1), n = hist.length, step = W / Math.max(59, n-1);
+  const col = getComputedStyle(document.documentElement).getPropertyValue("--accent").trim();
+  ctx.beginPath();
+  hist.forEach((v,i) => { const x = i*step, y = H - 4 - (v/max)*(H-10); i? ctx.lineTo(x,y) : ctx.moveTo(x,y); });
+  ctx.strokeStyle = col; ctx.lineWidth = 1.5*devicePixelRatio; ctx.stroke();
+  ctx.lineTo((n-1)*step, H); ctx.lineTo(0, H); ctx.closePath();
+  ctx.fillStyle = col; ctx.globalAlpha = .12; ctx.fill(); ctx.globalAlpha = 1;
+  const lx = (n-1)*step, ly = H - 4 - (hist[n-1]/max)*(H-10);
+  ctx.beginPath(); ctx.arc(lx, ly, 3*devicePixelRatio, 0, 7); ctx.fill();
+}
+
+async function tick() {
+  const [s, miners, epochs, events] = await Promise.all(["/api/status","/api/miners","/api/epochs","/api/events"].map(u => fetch(u).then(r => r.json())));
+  const R = s.round, unit = 2 ** R.credit_unit_log2;
+  document.title = `${R.round_id} · RhoSwarm`;
+  $("#title").textContent = R.round_id;
+  $("#status").textContent = s.status; $("#status").className = "pill " + s.status;
+  $("#curve").textContent = `${R.bits}-bit prime-order curve · Pollard rho, r=${R.r} adding walk · DP = ${R.w} trailing zero bits · 1 credit = 2^${R.credit_unit_log2} steps · prize ${R.prize_pool_usdc.toLocaleString()} USDC`;
+
+  const pct = s.progress * 100;
+  $("#pct").textContent = pct.toFixed(1) + "%";
+  $("#bar").style.width = Math.min(100, pct) + "%";
+  $("#steps").textContent = `${fmt(s.total_credited_steps,2)} credited steps of ${fmt(R.expected_steps,2)} expected (1.25·√n)`;
+  $("#meternote").textContent = s.status === "solved"
+    ? `Solved after ${(s.solution.ratio*100).toFixed(0)}% of the expected work. The expectation is a mean, not a deadline: the collision is a geometric event and half of all rounds end before this line.`
+    : `Expected work is a mean, not a deadline. The collision can land at 30% or at 250%; passing 100% does not mean anything is wrong. ETA at the current rate: ${dur(s.eta_seconds)}.`;
+
+  hist.push(s.steps_per_sec); if (hist.length > 60) hist.shift(); drawSpark();
+
+  $("#stats").innerHTML = [
+    stat("Network rate", fmt(s.steps_per_sec), "steps/s"),
+    stat("Distinguished points", fmt(s.dps)),
+    stat("Credits minted", s.total_credits.toFixed(3)),
+    stat("Miners", `${s.active_miners}`, s.slashed ? `${s.slashed} slashed` : "active"),
+    stat("Segments replayed", fmt(s.spot_checks), `1 in ${R.spot_check_rate}`),
+    stat("Epoch", s.epoch, `${R.epoch_seconds}s each`),
+    stat("Ledger root", s.last_epoch ? s.last_epoch.root.slice(0,12)+"…" : "–", s.last_epoch ? `epoch ${s.last_epoch.idx}` : "pending"),
+    stat("Round age", dur(s.now - s.started_at)),
+  ].join("");
+
+  const mb = $("#miners tbody");
+  mb.innerHTML = miners.map(m => `<tr>
+    <td class="mono" title="${m.pubkey}">${short(m.pubkey)}<div style="color:var(--muted);font-size:11px">${short(m.payout_addr)}</div></td>
+    <td><span class="tag ${m.status}">${m.status}</span>${m.note?`<div style="color:var(--bad);font-size:11px;max-width:22ch">${m.note}</div>`:""}</td>
+    <td class="r num">${fmt(m.dps)}</td>
+    <td class="r num">${m.credits.toFixed(3)}</td>
+    <td class="r num"><span class="share" style="width:${Math.round(m.share*60)}px"></span>${(m.share*100).toFixed(1)}%</td>
+    <td class="r num">${m.spot_checks}</td>
+    <td class="r num">${m.rejected}</td></tr>`).join("");
+  $("#miners-empty").hidden = miners.length > 0;
+
+  $("#epochs tbody").innerHTML = epochs.slice(0,8).map(e => `<tr><td class="num">${e.idx}</td><td class="mono" title="${e.root}">${short(e.root)}</td><td class="r num">${(e.total_steps/unit).toFixed(3)}</td><td class="r num">${e.miners}</td></tr>`).join("");
+  $("#epochs-empty").hidden = epochs.length > 0;
+
+  $("#events").innerHTML = events.map(e => {
+    const d = e.detail, txt = {
+      round_open: `round ${d.round_id} opened (${d.bits}-bit)`,
+      miner_admitted: `${d.pubkey}… admitted, ticket ${d.ticket_steps} steps, replayed in ${d.verify_ms} ms`,
+      ticket_rejected: `${d.pubkey}… ticket did not replay`,
+      slashed: `${d.pubkey}… slashed: ${d.why}`,
+      epoch_closed: `epoch ${d.epoch} root ${d.root}… (${(d.total_steps/unit).toFixed(3)} credits, ${d.miners} miners)`,
+      solved: `k = ${d.k_hex} found by ${d.finder}… × ${d.partner}… at ${(d.ratio*100).toFixed(0)}% of expected work`,
+    }[e.kind] || JSON.stringify(d);
+    return `<li><span class="t num">${ago(e.ts)} ago</span><span class="k ${e.kind}">${e.kind.replace("_"," ")}</span><span>${txt}</span></li>`;
+  }).join("");
+
+  if (s.solution) {
+    const sol = s.solution;
+    $("#solution").hidden = false;
+    $("#sol-k").textContent = `k = ${sol.k}  (${sol.k_hex})`;
+    $("#sol-note").textContent = `k·G = Q ${sol.verified ? "verified" : "FAILED"} · collision at x = ${sol.collision_x} between walks of ${short(sol.finder)} and ${short(sol.partner)} · ${fmt(sol.total_credited_steps,2)} credited steps = ${(sol.ratio*100).toFixed(0)}% of expected · pool split once, pro rata to credits minted in this round.`;
+    $("#payouts tbody").innerHTML = sol.payouts.map(p => `<tr><td class="mono">${p.payout_addr}</td><td class="r num">${p.credits.toFixed(3)}</td><td class="r num">${(p.share*100).toFixed(2)}%</td><td class="r num">${p.usdc.toFixed(2)}</td></tr>`).join("");
+  }
+  $("#foot").textContent = `Coordinator v1 (single operator). Every number on this page is recomputable from the round spec: start points are PRF(round, identity, t), tickets and 1-in-${R.spot_check_rate} DP segments are replayed with the same walk.`;
+}
+tick().catch(console.error);
+setInterval(() => tick().catch(console.error), 2000);
+</script>

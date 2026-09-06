@@ -1,0 +1,10 @@
+.venv/
+data/
+logs/
+*.key
+rounds/demo.secret.json
+__pycache__/
+contracts/out/
+contracts/cache/
+contracts/lib/
+demo_run.log

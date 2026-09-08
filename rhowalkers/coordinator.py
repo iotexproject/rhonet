@@ -2,7 +2,7 @@
 
 Responsibilities, in the order a DP passes through them:
   admission  -> curve-native ticket replayed once per identity, slow-start quota
-  intake     -> signature check, format check, uniqueness, deterministic 1/N spot-check replay
+  intake     -> signature check, format check, uniqueness, bounded sequential work identifiers
   ledger     -> credited_steps per miner (1 credit = 2^credit_unit_log2 steps)
   collision  -> same x from two different walks -> solve k, verify k*G == Q, end round
   epochs     -> every epoch_seconds: Merkle root over (payout_addr, credited_steps), the thing
@@ -27,6 +27,10 @@ from fastapi.responses import FileResponse, JSONResponse
 
 from . import ec, merkle
 
+T_WINDOW = 4096
+MAX_AUDITS_PER_EPOCH = 512
+MAX_DELAYED_AUDITS_PER_EPOCH = 64
+
 STATIC = os.path.join(os.path.dirname(__file__), "static")
 
 SCHEMA = """
@@ -37,15 +41,18 @@ CREATE TABLE IF NOT EXISTS miners (
   credited_steps INTEGER NOT NULL DEFAULT 0, spot_checks INTEGER NOT NULL DEFAULT 0,
   spot_fails INTEGER NOT NULL DEFAULT 0, rejected INTEGER NOT NULL DEFAULT 0,
   epoch_dps INTEGER NOT NULL DEFAULT 0, epoch_dps_epoch INTEGER NOT NULL DEFAULT -1,
+  next_t INTEGER NOT NULL DEFAULT 0, t_gaps INTEGER NOT NULL DEFAULT 0,
   last_seen REAL, note TEXT
 );
 CREATE TABLE IF NOT EXISTS dps (
   x TEXT NOT NULL, y TEXT NOT NULL, a TEXT NOT NULL, b TEXT NOT NULL,
   pubkey TEXT NOT NULL, t INTEGER NOT NULL, steps INTEGER NOT NULL,
   ts REAL NOT NULL, checked INTEGER NOT NULL DEFAULT 0,
+  epoch INTEGER NOT NULL DEFAULT -1,
   PRIMARY KEY (pubkey, t)
 );
 CREATE INDEX IF NOT EXISTS dps_x ON dps(x);
+CREATE INDEX IF NOT EXISTS dps_epoch_checked ON dps(epoch, checked);
 CREATE TABLE IF NOT EXISTS epochs (
   idx INTEGER PRIMARY KEY, ts REAL NOT NULL, root TEXT NOT NULL,
   total_steps INTEGER NOT NULL, n_miners INTEGER NOT NULL, leaves TEXT NOT NULL
@@ -55,6 +62,18 @@ CREATE TABLE IF NOT EXISTS events (
 );
 CREATE TABLE IF NOT EXISTS state (k TEXT PRIMARY KEY, v TEXT NOT NULL);
 """
+
+
+def migrate_schema(db):
+    """Upgrade existing tables before SCHEMA creates indexes on new columns."""
+    for table, column, default in (("dps", "epoch", -1), ("miners", "next_t", 0),
+                                   ("miners", "t_gaps", 0)):
+        try:
+            db.execute(f"ALTER TABLE {table} ADD COLUMN {column} INTEGER NOT NULL DEFAULT {default}")
+        except sqlite3.OperationalError as exc:
+            if "duplicate column name" not in str(exc) and "no such table" not in str(exc):
+                raise
+    db.commit()
 
 
 def now() -> float:
@@ -67,6 +86,7 @@ class Coordinator:
         self.table = ec.walk_table(spec)
         self.lock = threading.RLock()
         self.db = sqlite3.connect(db_path, check_same_thread=False)
+        migrate_schema(self.db)
         self.db.executescript(SCHEMA)
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.commit()
@@ -147,17 +167,19 @@ class Coordinator:
             raise HTTPException(413, "batch too large")
         with self.lock:
             m = self.db.execute(
-                "SELECT status, admitted_epoch, epoch_dps, epoch_dps_epoch FROM miners WHERE pubkey=?", (pubkey,)
+                "SELECT status, admitted_epoch, epoch_dps, epoch_dps_epoch, next_t, t_gaps, dps FROM miners WHERE pubkey=?", (pubkey,)
             ).fetchone()
             if not m:
                 raise HTTPException(403, "no ticket for this identity")
-            status, admitted_epoch, epoch_dps, epoch_dps_epoch = m
+            status, admitted_epoch, epoch_dps, epoch_dps_epoch, next_t, t_gaps, total_dps = m
             if status == "slashed":
                 raise HTTPException(403, "identity slashed")
             ep = self.current_epoch()
             if epoch_dps_epoch != ep:
                 epoch_dps, epoch_dps_epoch = 0, ep
             q = self.quota(admitted_epoch)
+            used = {r[0] for r in self.db.execute(
+                "SELECT t FROM dps WHERE pubkey=? AND t>=?", (pubkey, next_t))}
 
             accepted, rejected, checked = 0, [], 0
             credited = 0
@@ -176,26 +198,36 @@ class Coordinator:
                     rejected.append((i, "not on curve")); continue
                 if epoch_dps >= q:
                     rejected.append((i, "quota")); continue
-                if self.db.execute("SELECT 1 FROM dps WHERE pubkey=? AND t=?", (pubkey, t)).fetchone():
+                if t < next_t:
+                    rejected.append((i, "t reused/too old")); continue
+                if t in used:
                     rejected.append((i, "duplicate")); continue
-
-                # deterministic spot check: the miner cannot know which segments are replayed
-                do_check = int.from_bytes(ec.H(spec.round_id, "spot", pubkey, t), "big") % spec.spot_check_rate == 0
-                if do_check:
-                    checked += 1
-                    if not ec.dp_verify(spec, self.table, pubkey, dp):
-                        self._slash(pubkey, f"spot check failed on t={t}")
-                        return {"accepted": accepted, "rejected": rejected + [(i, "SPOT CHECK FAILED - identity slashed")], "slashed": True}
+                if t >= next_t + T_WINDOW:
+                    # Retire only missing slots; already accepted out-of-order work
+                    # must not count as gaps.
+                    floor = t - T_WINDOW + 1
+                    retired = {v for v in used if v < floor}
+                    t_gaps += floor - next_t - len(retired)
+                    used.difference_update(retired)
+                    next_t = floor
 
                 # collision check against every earlier walk that hit this x
                 prior = self.db.execute("SELECT a, b, y, pubkey, t FROM dps WHERE x=?", (str(x),)).fetchall()
                 self.db.execute(
-                    "INSERT INTO dps(x, y, a, b, pubkey, t, steps, ts, checked) VALUES(?,?,?,?,?,?,?,?,?)",
-                    (str(x), str(y), str(a), str(b), pubkey, t, steps, now(), int(do_check)),
+                    "INSERT INTO dps(x, y, a, b, pubkey, t, steps, ts, checked, epoch) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                    (str(x), str(y), str(a), str(b), pubkey, t, steps, now(), 0, ep),
                 )
+                used.add(t)
+                while next_t in used:
+                    used.remove(next_t)
+                    next_t += 1
                 accepted += 1
                 epoch_dps += 1
                 credited += 1 << w
+                if total_dps + accepted >= 64 and t_gaps * 4 > total_dps + accepted:
+                    # Stop at the offending prefix, before later rows in this
+                    # batch could dilute the gap ratio. Persist counters below.
+                    break
                 for (pa, pb, py, ppk, pt) in prior:
                     if (pa, pb) == (str(a), str(b)):
                         # identical coefficients at the same x from a different PRF start cannot happen
@@ -204,7 +236,7 @@ class Coordinator:
                         return {"accepted": accepted, "rejected": rejected, "slashed": True}
                     other = {"a": pa, "b": pb, "y": py}
                     # the colliding pair is worth verifying fully before we trust it
-                    if not do_check and not ec.dp_verify(spec, self.table, pubkey, dp):
+                    if not ec.dp_verify(spec, self.table, pubkey, dp):
                         self._slash(pubkey, f"collision DP failed replay t={t}")
                         return {"accepted": accepted, "rejected": rejected, "slashed": True}
                     k = ec.solve_collision(spec, {"a": a, "b": b, "y": y}, other)
@@ -216,10 +248,13 @@ class Coordinator:
 
             self.db.execute(
                 "UPDATE miners SET dps=dps+?, credited_steps=credited_steps+?, spot_checks=spot_checks+?, rejected=rejected+?, "
-                "epoch_dps=?, epoch_dps_epoch=?, last_seen=? WHERE pubkey=?",
-                (accepted, credited, checked, len(rejected), epoch_dps, epoch_dps_epoch, now(), pubkey),
+                "epoch_dps=?, epoch_dps_epoch=?, last_seen=?, next_t=?, t_gaps=? WHERE pubkey=?",
+                (accepted, credited, checked, len(rejected), epoch_dps, epoch_dps_epoch, now(), next_t, t_gaps, pubkey),
             )
             self.db.commit()
+            if total_dps + accepted >= 64 and t_gaps * 4 > total_dps + accepted:
+                self._slash(pubkey, "excessive t gaps")
+                return {"accepted": accepted, "rejected": rejected, "slashed": True}
             self.rate_window.append((now(), credited))
             out = {"accepted": accepted, "rejected": rejected, "checked": checked, "quota_left": q - epoch_dps, "epoch": ep}
             if solved:
@@ -254,23 +289,63 @@ class Coordinator:
         return sol
 
     # ---------------------------------------------------------------- epochs
+    def audit_epoch(self, idx, root_bytes):
+        rows = self.db.execute(
+            "SELECT pubkey, t, x, y, a, b, steps FROM dps WHERE epoch=? AND checked=0",
+            (idx,),
+        ).fetchall()
+        self._audit_rows(idx, root_bytes, rows, "spot", self.spec.spot_check_rate,
+                         MAX_AUDITS_PER_EPOCH, "epoch_audit")
+
+    def audit_delayed(self, idx, root_bytes):
+        rows = self.db.execute(
+            "SELECT pubkey, t, x, y, a, b, steps FROM dps WHERE epoch<? AND checked=1",
+            (idx,),
+        ).fetchall()
+        self._audit_rows(idx, root_bytes, rows, "spot2", self.spec.spot_check_rate * 8,
+                         MAX_DELAYED_AUDITS_PER_EPOCH, "delayed_audit")
+
+    def _audit_rows(self, idx, root_bytes, rows, tag, rate, cap, event_kind):
+        targets = []
+        for row in rows:
+            selector = int.from_bytes(ec.H(root_bytes, tag, row[0], row[1]), "big")
+            if selector % rate == 0:
+                targets.append((selector, row))
+        targets.sort()  # Full selector, then row as deterministic tie breaker.
+        passed = failed = 0
+        for _, (pk, t, x, y, a, b, steps) in targets[:cap]:
+            dp = dict(t=t, x=x, y=y, a=a, b=b, steps=steps)
+            if ec.dp_verify(self.spec, self.table, pk, dp):
+                self.db.execute("UPDATE dps SET checked=1 WHERE pubkey=? AND t=?", (pk, t))
+                self.db.execute("UPDATE miners SET spot_checks=spot_checks+1 WHERE pubkey=?", (pk,))
+                passed += 1
+            else:
+                self._slash(pk, f"epoch {idx} audit failed on t={t}")
+                self.event("audit_failed", {"epoch": idx, "pubkey": pk[:16], "t": t})
+                failed += 1
+        self.db.commit()
+        self.event(event_kind, {"epoch": idx, "targets": min(len(targets), cap),
+                                "passed": passed, "failed": failed})
+
     def close_epoch(self):
         with self.lock:
-            idx = self.current_epoch() - 1
-            if idx < 0 or self.db.execute("SELECT 1 FROM epochs WHERE idx=?", (idx,)).fetchone():
-                return
-            rows = self.db.execute(
-                "SELECT payout_addr, SUM(credited_steps) FROM miners WHERE status='active' AND credited_steps>0 GROUP BY payout_addr ORDER BY payout_addr"
-            ).fetchall()
-            leaves = [merkle.leaf_hash(addr, st) for addr, st in rows]
-            root, _ = merkle.build(leaves)
-            total = sum(st for _, st in rows)
-            self.db.execute(
-                "INSERT INTO epochs(idx, ts, root, total_steps, n_miners, leaves) VALUES(?,?,?,?,?,?)",
-                (idx, now(), root.hex(), total, len(rows), json.dumps([[a, s] for a, s in rows])),
-            )
-            self.db.commit()
-            self.event("epoch_closed", {"epoch": idx, "root": root.hex()[:16], "total_steps": total, "miners": len(rows)})
+            last = self.db.execute("SELECT MAX(idx) FROM epochs").fetchone()[0]
+            # Catch up every sealed batch if the timer or coordinator was paused.
+            for idx in range(0 if last is None else last + 1, self.current_epoch()):
+                rows = self.db.execute(
+                    "SELECT payout_addr, SUM(credited_steps) FROM miners WHERE status='active' AND credited_steps>0 GROUP BY payout_addr ORDER BY payout_addr"
+                ).fetchall()
+                leaves = [merkle.leaf_hash(addr, st) for addr, st in rows]
+                root, _ = merkle.build(leaves)
+                total = sum(st for _, st in rows)
+                self.db.execute(
+                    "INSERT INTO epochs(idx, ts, root, total_steps, n_miners, leaves) VALUES(?,?,?,?,?,?)",
+                    (idx, now(), root.hex(), total, len(rows), json.dumps([[a, s] for a, s in rows])),
+                )
+                self.db.commit()
+                self.audit_epoch(idx, root)
+                self.audit_delayed(idx, root)
+                self.event("epoch_closed", {"epoch": idx, "root": root.hex()[:16], "total_steps": total, "miners": len(rows)})
 
     def proof(self, payout_addr: str):
         row = self.db.execute("SELECT idx, root, leaves FROM epochs ORDER BY idx DESC LIMIT 1").fetchone()

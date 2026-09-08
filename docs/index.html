@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>RhoWalkers</title>
-<meta name="description" content="A crowd of Pollard rho walkers solving public elliptic-curve challenges together. Verified work, one credit per unit of work, pro-rata settlement on Ethereum L2.">
+<title>RhoNet</title>
+<meta name="description" content="A community-owned compute network for public elliptic-curve challenges. Anyone with a GPU walks the curve; verified work mints credit; the prize settles pro rata on an Ethereum L2.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Serif:ital,wght@0,400;1,400&display=swap">
 <style>
@@ -52,16 +52,16 @@ footer a{color:var(--accent)}
 </head>
 <body>
 <main>
-<nav><span class="brand">RhoWalkers</span><span><a href="#how">How it works</a><a href="#demo">Demo</a><a href="#ladder">The ladder</a><a href="https://github.com/iotexproject/rhowalkers">GitHub</a></span></nav>
+<nav><span class="brand">RhoNet</span><span><a href="#how">How it works</a><a href="#demo">Demo</a><a href="#ladder">The ladder</a><a href="https://github.com/iotexproject/rhonet">GitHub</a></span></nav>
 
 <h1>A crowd of walkers on a curve, paid the moment two of them collide.</h1>
-<p class="lede">RhoWalkers is a mining pool for cryptanalysis. Anyone with a GPU runs Pollard rho against a public elliptic-curve challenge, every unit of verified work mints one credit, and the prize is split once, pro rata, when the round is solved.</p>
-<p><a class="cta" href="https://github.com/iotexproject/rhowalkers">Read the code</a><a class="cta alt" href="https://github.com/iotexproject/rhowalkers#run-it">Run the demo</a></p>
+<p class="lede">RhoNet is a mining pool for cryptanalysis. Anyone with a GPU runs Pollard rho against a public elliptic-curve challenge, every unit of verified work mints one credit, and the prize is split once, pro rata, when the round is solved.</p>
+<p><a class="cta" href="https://github.com/iotexproject/rhonet">Read the code</a><a class="cta alt" href="https://github.com/iotexproject/rhonet#run-it">Run the demo</a></p>
 <canvas class="walk" id="walk" aria-hidden="true"></canvas>
 
 <div class="notice">
   <b>Status: under remediation, do not run a public round.</b>
-  <p>An external security review on 8 September 2026 found four critical defects in this demonstrator, two of which we reproduced. The audit selector was predictable, so a miner that filtered its work identifiers could be paid for fabricated work and never be replayed. Stored points were never re-verified, so one participant could poison the table and consume the genuine collision in silence. The vault let the operator withdraw a sponsor's deposit at any time. Every finding, its reproduction and its fix are tracked in the open: <a href="https://github.com/iotexproject/rhowalkers/blob/main/review/2026-09-08-external-review.md">review/2026-09-08-external-review.md</a>.</p>
+  <p>An external security review on 8 September 2026 found four critical defects in this demonstrator, two of which we reproduced. The audit selector was predictable, so a miner that filtered its work identifiers could be paid for fabricated work and never be replayed. Stored points were never re-verified, so one participant could poison the table and consume the genuine collision in silence. The vault let the operator withdraw a sponsor's deposit at any time. Every finding, its reproduction and its fix are tracked in the open: <a href="https://github.com/iotexproject/rhonet/blob/main/review/2026-09-08-external-review.md">review/2026-09-08-external-review.md</a>.</p>
 </div>
 
 <h2>Why this is hard to organize</h2>
@@ -117,7 +117,7 @@ open http://127.0.0.1:8642    # dashboard</pre>
 <li>A bearer-asset round, such as a Bitcoin puzzle, only with a kangaroo implementation and only when the collision can be resolved without any single party learning <span class="mono">k</span> first. Puzzle #135 was taken by a single solver on 28 July 2026, which is exactly the risk this rung has to answer.</li>
 </ol>
 
-<footer>MIT licensed. <a href="https://github.com/iotexproject/rhowalkers">github.com/iotexproject/rhowalkers</a></footer>
+<footer>MIT licensed. <a href="https://github.com/iotexproject/rhonet">github.com/iotexproject/rhonet</a></footer>
 </main>
 <script>
 // a handful of random walks that end when two of them meet: the whole idea in one strip

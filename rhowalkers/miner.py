@@ -4,11 +4,12 @@ running batched rho walks -> signed DP batches every few seconds.
     python -m rhowalkers.miner --coordinator http://127.0.0.1:8642 --procs 4 --payout 0x...
 
 --cheat submits fabricated DPs (valid-looking points with made-up coefficients)
-to demonstrate that the coordinator's deterministic spot check catches and slashes it.
+to demonstrate that the coordinator's epoch audit catches and slashes it.
 """
 from __future__ import annotations
 
 import argparse
+import itertools
 import json
 import multiprocessing as mp
 import os
@@ -45,19 +46,22 @@ def signed(key: Ed25519PrivateKey, body: dict) -> dict:
     return body
 
 
-def worker(spec_dict, pk: str, batch: int, q: mp.Queue, stop: mp.Event, cheat: bool, wid: int):
+def worker(spec_dict, pk: str, batch: int, q: mp.Queue, stop: mp.Event, cheat: bool, wid: int, nprocs: int, cheat_evasive: bool = False):
     """One process, `batch` walks in lock-step. Ships (dps, steps) to the parent
     twice a second in a single message: a put per DP starves the queue feeder
     thread of the GIL and throttles the whole worker."""
     spec = ec.RoundSpec.from_dict(spec_dict)
     table = ec.walk_table(spec)
-    rng = lambda: secrets.randbits(62)
+    rng = itertools.count(wid, nprocs).__next__
     bw = ec.BatchWalker(spec, table, pk, batch, rng)
     buf = []
     last = time.time()
     while not stop.is_set():
         found = bw.step()
-        if cheat:
+        if cheat_evasive:
+            found = [dp for dp in found if int.from_bytes(
+                ec.H(spec.round_id, "spot", pk, dp["t"]), "big") % spec.spot_check_rate != 0]
+        if cheat or cheat_evasive:
             # fabricate: keep the real DP-shaped point, lie about the coefficients
             for dp in found:
                 dp["a"] = secrets.randbelow(spec.curve.n)
@@ -86,6 +90,7 @@ def main(argv=None):
     ap.add_argument("--batch", type=int, default=64)
     ap.add_argument("--flush", type=float, default=2.0, help="seconds between signed submissions")
     ap.add_argument("--cheat", action="store_true")
+    ap.add_argument("--cheat-evasive", action="store_true", help="fabricate only DPs skipped by the old audit selector")
     ap.add_argument("--max-seconds", type=float, default=None)
     args = ap.parse_args(argv)
 
@@ -111,7 +116,7 @@ def main(argv=None):
     ctx = mp.get_context("fork")
     q = ctx.Queue()
     stop = ctx.Event()
-    procs = [ctx.Process(target=worker, args=(spec_dict, pk, args.batch, q, stop, args.cheat, i), daemon=True) for i in range(args.procs)]
+    procs = [ctx.Process(target=worker, args=(spec_dict, pk, args.batch, q, stop, args.cheat, i, args.procs, args.cheat_evasive), daemon=True) for i in range(args.procs)]
     for p in procs:
         p.start()
 

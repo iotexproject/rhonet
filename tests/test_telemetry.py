@@ -11,7 +11,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from rhonet import ec, miner
+from rhonet import ec, walker
 from rhonet.coordinator import Coordinator, MAX_TELEMETRY_PER_SUBMISSION, SCHEMA
 
 
@@ -21,7 +21,7 @@ class TelemetryTests(unittest.TestCase):
         self.coord = Coordinator(self.spec, ':memory:')
         self.addCleanup(self.coord.db.close)
         self.key = Ed25519PrivateKey.from_private_bytes(bytes(range(32)))
-        self.pk = miner.pubkey_hex(self.key)
+        self.pk = walker.pubkey_hex(self.key)
         self.ticket = ec.ticket_solve(self.spec, self.coord.table, self.pk)
         self.coord.admit(self.pk, '0x' + '11' * 20, self.ticket)
         for t in range(100):
@@ -36,7 +36,7 @@ class TelemetryTests(unittest.TestCase):
 
     def test_signed_submission_stores_telemetry_without_extra_credit(self):
         from rhonet.coordinator import build_app
-        body = miner.signed(self.key, dict(round_id=self.spec.round_id, pubkey=self.pk,
+        body = walker.signed(self.key, dict(round_id=self.spec.round_id, pubkey=self.pk,
                                           dps=[self.dp], steps_done=12345, abandoned=7, epoch=self.coord.current_epoch(), seq=0))
         with TestClient(build_app(self.coord)) as client:
             tampered = dict(body, steps_done=12346)
@@ -45,7 +45,7 @@ class TelemetryTests(unittest.TestCase):
             self.assertEqual(response.status_code, 200, response.text)
             self.assertEqual(response.json()['accepted'], 1)
             status = client.get('/api/status').json()
-            m, = client.get('/api/miners').json()
+            m, = client.get('/api/contributors').json()
         credit = 1 << self.spec.w
         self.assertEqual(self.coord.db.execute(
             'SELECT executed_steps, abandoned_walks, ticket_steps, credited_steps FROM miners').fetchone(),
@@ -127,8 +127,8 @@ class TelemetryTests(unittest.TestCase):
             bw.abandoned += 2
             return []
         bw.step.side_effect = step
-        with patch.object(ec, 'BatchWalker', return_value=bw), patch.object(miner.time, 'time', side_effect=[0, 1, 1, 2, 2]):
-            miner.worker(self.spec.to_dict(), self.pk, 64, q, stop, False, 0, 1)
+        with patch.object(ec, 'BatchWalker', return_value=bw), patch.object(walker.time, 'time', side_effect=[0, 1, 1, 2, 2]):
+            walker.worker(self.spec.to_dict(), self.pk, 64, q, stop, False, 0, 1)
         self.assertEqual([call.args[0] for call in q.put.call_args_list], [([], 64, 2), ([], 64, 2)])
         self.assertEqual((bw.steps_done, bw.abandoned), (0, 0))
 
@@ -141,12 +141,12 @@ class TelemetryTests(unittest.TestCase):
         done.json.return_value = {'status': 'solved'}
         client.post.side_effect = [ok, ok, done]
         ctx.Queue.return_value.get.side_effect = [([], 100, 3), ([], 25, 1)]
-        with patch.object(miner, 'load_or_create_key', return_value=self.key), \
-                patch.object(miner.httpx, 'Client', return_value=client), \
-                patch.object(miner.mp, 'get_context', return_value=ctx), \
-                patch.object(miner.time, 'time', side_effect=range(100)), \
+        with patch.object(walker, 'load_or_create_key', return_value=self.key), \
+                patch.object(walker.httpx, 'Client', return_value=client), \
+                patch.object(walker.mp, 'get_context', return_value=ctx), \
+                patch.object(walker.time, 'time', side_effect=range(100)), \
                 patch.object(sys, 'stderr', new_callable=io.StringIO):
-            self.assertEqual(miner.main(['--procs', '1', '--flush', '0']), 0)
+            self.assertEqual(walker.main(['--procs', '1', '--flush', '0']), 0)
         submitted = [call.kwargs['json'] for call in client.post.call_args_list if call.args[0] == '/api/submit']
         self.assertEqual([(b['steps_done'], b['abandoned']) for b in submitted], [(100, 3), (25, 1)])
         for body in submitted:

@@ -1112,7 +1112,7 @@ def build_app(coord: Coordinator) -> FastAPI:
     def status():
         return coord.status_view()
 
-    @app.get("/api/miners")
+    @app.get("/api/contributors")
     def miners():
         return coord.miners_view()
 

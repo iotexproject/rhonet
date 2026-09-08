@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from fastapi.testclient import TestClient
-from rhonet import coordinator as module, ec, miner
+from rhonet import coordinator as module, ec, walker
 
 
 class BacklogTests(unittest.TestCase):
@@ -116,7 +116,7 @@ class BacklogTests(unittest.TestCase):
                 deferred += len(result['retry_indices'])
                 self.assertFalse(result.get('slashed'))
                 self.assertLessEqual(self.coord.status_view()['audit_backlog_steps'], 16 << self.spec.w)
-                pending = miner.retain_deferred(pending, pending, result)
+                pending = walker.retain_deferred(pending, pending, result)
                 self.assertEqual(self.coord.miners_view()[0]['status'], 'active')
                 self.assertEqual(self.coord.db.execute('SELECT t_gaps FROM miners').fetchone()[0], 0)
                 if not pending:

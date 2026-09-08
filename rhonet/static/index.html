@@ -96,18 +96,18 @@ footer{color:var(--muted);font-size:12px}
 
   <div class="cols">
     <section class="panel">
-      <h2>Miners</h2>
-      <div class="tbl"><table id="miners"><thead><tr>
+      <h2>Contributors</h2>
+      <div class="tbl"><table id="contributors"><thead><tr>
         <th>Identity</th><th>Status</th><th class="r">DPs</th><th class="r">Credits</th><th class="r">Share</th><th class="r">Replayed</th><th class="r">Rejected</th>
       </tr></thead><tbody></tbody></table></div>
-      <div class="empty" id="miners-empty">No miner admitted yet. Run <code class="mono">python -m rhonet.miner</code>.</div>
+      <div class="empty" id="contributors-empty">No contributor admitted yet. Run <code class="mono">python -m rhonet.walker</code>.</div>
     </section>
     <div style="display:grid;gap:20px;align-content:start">
       <section class="panel">
         <h2>Epochs (ledger roots)</h2>
-        <div class="tbl"><table id="epochs"><thead><tr><th>#</th><th>Merkle root</th><th class="r">Credits</th><th class="r">Miners</th></tr></thead><tbody></tbody></table></div>
+        <div class="tbl"><table id="epochs"><thead><tr><th>#</th><th>Merkle root</th><th class="r">Credits</th><th class="r">Contributors</th></tr></thead><tbody></tbody></table></div>
         <div class="empty" id="epochs-empty">First epoch closes shortly.</div>
-        <div class="note">Each root is what the coordinator would post to the L2 PrizeVault. A miner claims with a Merkle proof from <code class="mono">/api/proof?payout_addr=…</code>.</div>
+        <div class="note">Each root is what the coordinator would post to the L2 PrizeVault. A contributor claims with a Merkle proof from <code class="mono">/api/proof?payout_addr=…</code>.</div>
       </section>
       <section class="panel">
         <h2>Events</h2>
@@ -146,7 +146,7 @@ function drawSpark() {
 }
 
 async function tick() {
-  const [s, miners, epochs, events] = await Promise.all(["/api/status","/api/miners","/api/epochs","/api/events"].map(u => fetch(u).then(r => r.json())));
+  const [s, contributors, epochs, events] = await Promise.all(["/api/status","/api/contributors","/api/epochs","/api/events"].map(u => fetch(u).then(r => r.json())));
   const R = s.round, unit = 2 ** R.credit_unit_log2;
   document.title = `${R.round_id} · RhoNet`;
   $("#title").textContent = R.round_id;
@@ -176,15 +176,15 @@ async function tick() {
     stat("Abandoned walks", fmt(s.total_abandoned_walks)),
     stat("Distinguished points", fmt(s.dps)),
     stat("Credits minted", s.total_credits.toFixed(3)),
-    stat("Miners", `${s.active_miners}`, s.slashed ? `${s.slashed} slashed` : "active"),
+    stat("Contributors", `${s.active_miners}`, s.slashed ? `${s.slashed} slashed` : "active"),
     stat("Segments replayed", fmt(s.spot_checks), `1 in ${R.spot_check_rate}`),
     stat("Epoch", s.epoch, `${R.epoch_seconds}s each`),
     stat("Ledger root", s.last_epoch ? s.last_epoch.root.slice(0,12)+"…" : "–", s.last_epoch ? `epoch ${s.last_epoch.idx}` : "pending"),
     stat("Round age", dur(s.now - s.started_at)),
   ].join("");
 
-  const mb = $("#miners tbody");
-  mb.innerHTML = miners.map(m => `<tr>
+  const mb = $("#contributors tbody");
+  mb.innerHTML = contributors.map(m => `<tr>
     <td class="mono" title="${m.pubkey}">${short(m.pubkey)}<div style="color:var(--muted);font-size:11px">${short(m.payout_addr)}</div></td>
     <td><span class="tag ${m.status}">${m.status}</span>${m.note?`<div style="color:var(--bad);font-size:11px;max-width:22ch">${m.note}</div>`:""}</td>
     <td class="r num">${fmt(m.dps)}</td>
@@ -192,9 +192,9 @@ async function tick() {
     <td class="r num"><span class="share" style="width:${Math.round(m.share*60)}px"></span>${(m.share*100).toFixed(1)}%</td>
     <td class="r num">${m.spot_checks}</td>
     <td class="r num">${m.rejected}</td></tr>`).join("");
-  $("#miners-empty").hidden = miners.length > 0;
+  $("#contributors-empty").hidden = contributors.length > 0;
 
-  $("#epochs tbody").innerHTML = epochs.slice(0,8).map(e => `<tr><td class="num">${e.idx}</td><td class="mono" title="${e.root || "not sealed yet"}">${e.sealed ? short(e.root) : `<span style="color:var(--muted)">open</span>`}</td><td class="r num">${e.sealed ? (e.total_steps/unit).toFixed(3) : "–"}</td><td class="r num">${e.sealed ? e.miners : "–"}</td></tr>`).join("");
+  $("#epochs tbody").innerHTML = epochs.slice(0,8).map(e => `<tr><td class="num">${e.idx}</td><td class="mono" title="${e.root || "not sealed yet"}">${e.sealed ? short(e.root) : `<span style="color:var(--muted)">open</span>`}</td><td class="r num">${e.sealed ? (e.total_steps/unit).toFixed(3) : "–"}</td><td class="r num">${e.sealed ? e.contributors : "–"}</td></tr>`).join("");
   $("#epochs-empty").hidden = epochs.length > 0;
 
   $("#events").innerHTML = events.map(e => {
@@ -203,7 +203,7 @@ async function tick() {
       miner_admitted: `${d.pubkey}… admitted, ticket ${d.ticket_steps} steps, replayed in ${d.verify_ms} ms`,
       ticket_rejected: `${d.pubkey}… ticket did not replay`,
       slashed: `${d.pubkey}… slashed: ${d.why}`,
-      epoch_closed: `epoch ${d.epoch} root ${d.root}… (${(d.total_steps/unit).toFixed(3)} credits, ${d.miners} miners)`,
+      epoch_closed: `epoch ${d.epoch} root ${d.root}… (${(d.total_steps/unit).toFixed(3)} credits, ${d.contributors} contributors)`,
       solved: `k = ${d.k_hex} found by ${d.finder}… × ${d.partner}… (payment credit / mean: ${(d.ratio*100).toFixed(0)}%)`,
       epoch_audit: `epoch ${d.epoch}: ${d.targets} replayed, ${d.passed} passed, ${d.failed} failed`,
       delayed_audit: `epoch ${d.epoch} second pass: ${d.targets} replayed, ${d.passed} passed, ${d.failed} failed`,

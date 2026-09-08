@@ -12,7 +12,7 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from rhonet import coordinator as module, ec, miner
+from rhonet import coordinator as module, ec, walker
 
 
 class HardeningTests(unittest.TestCase):
@@ -24,7 +24,7 @@ class HardeningTests(unittest.TestCase):
         self.coord = module.Coordinator(self.spec, self.path)
         self.addCleanup(self.coord.db.close)
         self.key = Ed25519PrivateKey.from_private_bytes(bytes([42]) * 32)
-        self.pk = miner.pubkey_hex(self.key)
+        self.pk = walker.pubkey_hex(self.key)
         self.addr = '0x' + 'ab' * 20
         self.ticket = ec.ticket_solve(self.spec, self.coord.table, self.pk)
         self.clock = patch.object(module, 'now', return_value=self.coord.started_at + 1)
@@ -32,7 +32,7 @@ class HardeningTests(unittest.TestCase):
         self.addCleanup(self.clock.stop)
 
     def body(self, seq=0, **fields):
-        return miner.signed(self.key, dict(round_id=self.spec.round_id, pubkey=self.pk,
+        return walker.signed(self.key, dict(round_id=self.spec.round_id, pubkey=self.pk,
                                           epoch=self.coord.current_epoch(), seq=seq, **fields))
 
     def admit(self):
@@ -47,12 +47,12 @@ class HardeningTests(unittest.TestCase):
             fd = original(name, flags, mode)
             self.assertEqual(os.fstat(fd).st_mode & 0o777, 0o600)
             return fd
-        with patch.object(miner.os, 'open', side_effect=create) as opening:
-            first = miner.load_or_create_key(str(path))
-            second = miner.load_or_create_key(str(path))
+        with patch.object(walker.os, 'open', side_effect=create) as opening:
+            first = walker.load_or_create_key(str(path))
+            second = walker.load_or_create_key(str(path))
         self.assertEqual(opening.call_count, 2)
         self.assertEqual(path.stat().st_mode & 0o777, 0o600)
-        self.assertEqual(miner.pubkey_hex(first), miner.pubkey_hex(second))
+        self.assertEqual(walker.pubkey_hex(first), walker.pubkey_hex(second))
 
     def test_signed_replay_staleness_and_restart(self):
         self.admit()
@@ -62,7 +62,7 @@ class HardeningTests(unittest.TestCase):
         replay = client.post('/api/submit', json=body)
         self.assertEqual((replay.status_code, replay.json()['detail']), (400, 'replayed submission'))
         stale = dict(body, epoch=self.coord.current_epoch() - 2, seq=11)
-        stale = miner.signed(self.key, stale)
+        stale = walker.signed(self.key, stale)
         response = client.post('/api/submit', json=stale)
         self.assertEqual((response.status_code, response.json()['detail']), (400, 'stale submission'))
         other = module.Coordinator(self.spec, self.path)
@@ -91,12 +91,12 @@ class HardeningTests(unittest.TestCase):
         for field in ('epoch', 'seq'):
             body = self.body(dps=[])
             del body[field]
-            response = client.post('/api/submit', json=miner.signed(self.key, body))
+            response = client.post('/api/submit', json=walker.signed(self.key, body))
             self.assertEqual(response.status_code, 400)
         for seq, offset in enumerate((-1, 1)):
             body = self.body(seq=seq, dps=[])
             body['epoch'] += offset
-            self.assertEqual(client.post('/api/submit', json=miner.signed(self.key, body)).status_code, 200)
+            self.assertEqual(client.post('/api/submit', json=walker.signed(self.key, body)).status_code, 200)
 
     def test_ticket_freshness(self):
         client = TestClient(module.build_app(self.coord))

@@ -1,7 +1,7 @@
 """RhoNet miner: Ed25519 identity -> curve-native ticket -> N worker processes
 running batched rho walks -> signed DP batches every few seconds.
 
-    python -m rhonet.miner --coordinator http://127.0.0.1:8642 --procs 4 --payout 0x...
+    python -m rhonet.walker --coordinator http://127.0.0.1:8642 --procs 4 --payout 0x...
 
 --cheat submits fabricated DPs (valid-looking points with made-up coefficients)
 to demonstrate that the coordinator's epoch audit catches and slashes it.

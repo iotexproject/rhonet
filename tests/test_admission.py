@@ -17,7 +17,7 @@ import uvicorn
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from rhonet import coordinator as module, ec, miner
+from rhonet import coordinator as module, ec, walker
 
 
 class AdmissionTests(unittest.TestCase):
@@ -51,7 +51,7 @@ class AdmissionTests(unittest.TestCase):
             seen = set()
             for i in range(8):
                 key = Ed25519PrivateKey.from_private_bytes(bytes([i + 1]) * 32)
-                pk = miner.pubkey_hex(key)
+                pk = walker.pubkey_hex(key)
                 ticket = ec.ticket_solve(coord.spec, coord.table, pk)
                 for t in range(1000):
                     result = ec.walk_to_dp(coord.spec, coord.table, *ec.derive_start(coord.spec, pk, t),
@@ -68,13 +68,13 @@ class AdmissionTests(unittest.TestCase):
                 key, pk, ticket, dp = identity
                 seq = itertools.count()
                 def body(**fields):
-                    return miner.signed(key, dict(round_id=coord.spec.round_id, pubkey=pk,
+                    return walker.signed(key, dict(round_id=coord.spec.round_id, pubkey=pk,
                                         epoch=client.get('/api/status').json()['epoch'], seq=next(seq), **fields))
                 barrier.wait(timeout=5)
-                response = miner.post_with_retry(client, '/api/ticket',
+                response = walker.post_with_retry(client, '/api/ticket',
                     lambda: body(ticket=ticket, payout_addr='0x' + pk[:40]))
                 self.assertEqual(response.status_code, 200, response.text)
-                response = miner.post_with_retry(client, '/api/submit', lambda: body(dps=[dp]))
+                response = walker.post_with_retry(client, '/api/submit', lambda: body(dps=[dp]))
                 self.assertEqual(response.status_code, 200, response.text)
                 self.assertEqual(response.json()['accepted'], 1)
             original_verify = ec.ticket_verify
@@ -93,9 +93,9 @@ class AdmissionTests(unittest.TestCase):
     def test_B_flood_is_shed(self):
         with self.server() as (coord, client):
             key = Ed25519PrivateKey.generate()
-            pk = miner.pubkey_hex(key)
+            pk = walker.pubkey_hex(key)
             # Invalid nonce is rejected cheaply by the real verifier.
-            bodies = [miner.signed(key, dict(round_id=coord.spec.round_id, pubkey=pk,
+            bodies = [walker.signed(key, dict(round_id=coord.spec.round_id, pubkey=pk,
                 payout_addr='0x' + '11' * 20, epoch=coord.current_epoch(), seq=i,
                 ticket=dict(nonce=-1, steps=1, x=0))) for i in range(600)]
             latencies = []
@@ -120,14 +120,14 @@ class AdmissionTests(unittest.TestCase):
         client = Mock()
         client.post.side_effect = [httpx.Response(c) for c in (429, 429, 200)]
         bodies = Mock(side_effect=[{'seq': i, 'epoch': i} for i in range(3)])
-        with patch.object(miner.time, 'sleep') as sleep, patch.object(miner.random, 'uniform', return_value=1):
-            self.assertEqual(miner.post_with_retry(client, '/api/ticket', bodies).status_code, 200)
+        with patch.object(walker.time, 'sleep') as sleep, patch.object(walker.random, 'uniform', return_value=1):
+            self.assertEqual(walker.post_with_retry(client, '/api/ticket', bodies).status_code, 200)
         self.assertEqual([call.args[0] for call in sleep.call_args_list], [.5, 1])
         self.assertEqual(bodies.call_count, 3)
         self.assertEqual([c.kwargs['json']['seq'] for c in client.post.call_args_list], [0, 1, 2])
         client.reset_mock()
         client.post.side_effect = [httpx.Response(400)]
-        self.assertEqual(miner.post_with_retry(client, '/api/ticket', lambda: {}).status_code, 400)
+        self.assertEqual(walker.post_with_retry(client, '/api/ticket', lambda: {}).status_code, 400)
         self.assertEqual(client.post.call_count, 1)
 
     def test_C_submit_retains_batch_and_telemetry(self):
@@ -151,15 +151,15 @@ class AdmissionTests(unittest.TestCase):
         client.post.side_effect = post
         ctx = Mock()
         ctx.Queue.return_value.get.side_effect = [([{'t': 7}], 123, 2), queue.Empty()]
-        original_retry = miner.post_with_retry
+        original_retry = walker.post_with_retry
         def retry(*args, **kwargs):
             return original_retry(*args, **kwargs, budget=0 if exhaust else 300)
-        with tempfile.TemporaryDirectory() as tmp, patch.object(miner.httpx, 'Client', return_value=client), \
-                patch.object(miner.ec, 'ticket_solve', return_value={'steps': 1, 'nonce': 0}), \
-                patch.object(miner.mp, 'get_context', return_value=ctx), \
-                patch.object(miner.time, 'sleep'), patch.object(miner, 'post_with_retry', side_effect=retry), \
+        with tempfile.TemporaryDirectory() as tmp, patch.object(walker.httpx, 'Client', return_value=client), \
+                patch.object(walker.ec, 'ticket_solve', return_value={'steps': 1, 'nonce': 0}), \
+                patch.object(walker.mp, 'get_context', return_value=ctx), \
+                patch.object(walker.time, 'sleep'), patch.object(walker, 'post_with_retry', side_effect=retry), \
                 patch('sys.stderr') as stderr:
-            self.assertEqual(miner.main(['--key', str(Path(tmp) / 'key'), '--procs', '1', '--flush', '0']), 0)
+            self.assertEqual(walker.main(['--key', str(Path(tmp) / 'key'), '--procs', '1', '--flush', '0']), 0)
         self.assertEqual(len(submitted), 2)
         for body in submitted:
             self.assertEqual((body['dps'], body['steps_done'], body['abandoned']), ([{'t': 7}], 123, 2))
@@ -183,10 +183,10 @@ class AdmissionTests(unittest.TestCase):
         client.post.side_effect = post
         ctx.Queue.return_value.get.side_effect = [([{'t': 9}, {'t': 3}, {'t': 7}], 123, 2),
                                                   ([{'t': 10}], 50, 1)]
-        with tempfile.TemporaryDirectory() as tmp, patch.object(miner.httpx, 'Client', return_value=client), \
-                patch.object(miner.ec, 'ticket_solve', return_value={'steps': 1, 'nonce': 0}), \
-                patch.object(miner.mp, 'get_context', return_value=ctx), patch('sys.stderr'):
-            self.assertEqual(miner.main(['--key', str(Path(tmp) / 'key'), '--procs', '1', '--flush', '0']), 0)
+        with tempfile.TemporaryDirectory() as tmp, patch.object(walker.httpx, 'Client', return_value=client), \
+                patch.object(walker.ec, 'ticket_solve', return_value={'steps': 1, 'nonce': 0}), \
+                patch.object(walker.mp, 'get_context', return_value=ctx), patch('sys.stderr'):
+            self.assertEqual(walker.main(['--key', str(Path(tmp) / 'key'), '--procs', '1', '--flush', '0']), 0)
         self.assertEqual(submitted[0]['dps'], [{'t': 3}, {'t': 7}, {'t': 9}])
         self.assertEqual(submitted[1]['dps'], [{'t': 7}, {'t': 9}])
         self.assertEqual((submitted[1]['steps_done'], submitted[1]['abandoned']), (50, 1))
@@ -197,8 +197,8 @@ class AdmissionTests(unittest.TestCase):
                                    httpx.Response(200, json={'accepted': 1})]
         bodies = Mock(side_effect=[{'epoch': 0, 'dps': [{'t': 7}]},
                                    {'epoch': 2, 'dps': [{'t': 7}]}])
-        with patch.object(miner.time, 'sleep'):
-            self.assertEqual(miner.post_with_retry(client, '/api/submit', bodies).status_code, 200)
+        with patch.object(walker.time, 'sleep'):
+            self.assertEqual(walker.post_with_retry(client, '/api/submit', bodies).status_code, 200)
         self.assertEqual(bodies.call_count, 2)
         self.assertEqual([c.kwargs['json']['dps'] for c in client.post.call_args_list],
                          [[{'t': 7}], [{'t': 7}]])
@@ -206,14 +206,14 @@ class AdmissionTests(unittest.TestCase):
     def test_retry_transport_and_budget(self):
         client = Mock()
         client.post.side_effect = [httpx.ConnectError('offline'), httpx.Response(200)]
-        with patch.object(miner.time, 'sleep'):
-            self.assertEqual(miner.post_with_retry(client, '/api/submit', lambda: {}).status_code, 200)
+        with patch.object(walker.time, 'sleep'):
+            self.assertEqual(walker.post_with_retry(client, '/api/submit', lambda: {}).status_code, 200)
         client.post.side_effect = [httpx.Response(503)]
-        with patch.object(miner.time, 'monotonic', side_effect=[0, 1]), patch.object(miner.time, 'sleep') as sleep:
-            self.assertEqual(miner.post_with_retry(client, '/api/submit', lambda: {}, budget=1).status_code, 503)
+        with patch.object(walker.time, 'monotonic', side_effect=[0, 1]), patch.object(walker.time, 'sleep') as sleep:
+            self.assertEqual(walker.post_with_retry(client, '/api/submit', lambda: {}, budget=1).status_code, 503)
             sleep.assert_not_called()
         client.post.side_effect = [httpx.ConnectError('offline')]
-        self.assertIsNone(miner.post_with_retry(client, '/api/submit', lambda: {}, budget=0))
+        self.assertIsNone(walker.post_with_retry(client, '/api/submit', lambda: {}, budget=0))
 
     def test_gate_queue_timeout_and_release(self):
         gate = module.TicketGate(1, 1, .1)

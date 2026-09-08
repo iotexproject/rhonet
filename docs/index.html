@@ -4,33 +4,33 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>RhoNet</title>
-<meta name="description" content="Point a GPU at a 30-year-old elliptic-curve bounty. Every verified step earns credit. When two walks collide, the prize splits pro rata on chain.">
+<meta name="description" content="Collective discovery for open cryptographic challenges. Contribute GPU time to a public elliptic-curve search, earn credit for verified work, share the prize when the answer is found.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;450;500;600&display=swap">
 <style>
 :root{
-  --bg:#0a0b0d; --panel:#0f1114; --sunk:#0c0e10; --raise:#15181c;
-  --ink:#eceef1; --muted:#9aa0a8; --faint:#666c75;
-  --line:#1c2025; --line2:#272c33;
-  --accent:#ffb454; --accent-dim:#8a5f24; --accent-soft:rgba(255,180,84,.10);
+  --bg:#040705; --panel:#080d0a; --sunk:#060a08; --raise:#0d1410;
+  --ink:#dff5e7; --muted:#8aa697; --faint:#587065;
+  --line:#122019; --line2:#1c3327;
+  --accent:#3bf58a; --accent-dim:#1d7a48; --accent-soft:rgba(59,245,138,.10);
   --bad:#ff7a7a; --good:#7ad6a0;
   --mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
   --sans:"IBM Plex Sans",system-ui,-apple-system,sans-serif;
   --r:4px;
 }
 :root[data-theme="light"]{
-  --bg:#fbfaf8; --panel:#fff; --sunk:#f4f2ee; --raise:#f8f7f4;
+  --bg:#f6f8f6; --panel:#fff; --sunk:#eef2ef; --raise:#f9fbf9;
   --ink:#14161a; --muted:#565c65; --faint:#8b9099;
-  --line:#e5e2dc; --line2:#d6d2ca;
-  --accent:#a35c00; --accent-dim:#a35c00; --accent-soft:rgba(163,92,0,.08);
+  --line:#dfe6e1; --line2:#ccd6cf;
+  --accent:#0a7a45; --accent-dim:#0a7a45; --accent-soft:rgba(10,122,69,.08);
   --bad:#b3283e; --good:#1c7047;
 }
 @media (prefers-color-scheme:light){:root:not([data-theme="dark"]){
-  --bg:#fbfaf8; --panel:#fff; --sunk:#f4f2ee; --raise:#f8f7f4;
+  --bg:#f6f8f6; --panel:#fff; --sunk:#eef2ef; --raise:#f9fbf9;
   --ink:#14161a; --muted:#565c65; --faint:#8b9099;
-  --line:#e5e2dc; --line2:#d6d2ca;
-  --accent:#a35c00; --accent-dim:#a35c00; --accent-soft:rgba(163,92,0,.08);
+  --line:#dfe6e1; --line2:#ccd6cf;
+  --accent:#0a7a45; --accent-dim:#0a7a45; --accent-soft:rgba(10,122,69,.08);
   --bad:#b3283e; --good:#1c7047;
 }}
 *{box-sizing:border-box}
@@ -56,13 +56,13 @@ canvas#walk{position:absolute;inset:auto 0 0 0;top:0;width:100%;height:100%;opac
 .hero-in{position:relative}
 h1{font-weight:600;font-size:clamp(31px,4.9vw,50px);line-height:1.08;margin:0 0 18px;letter-spacing:-.032em;
   text-wrap:balance;max-width:17ch}
-h1 span{color:var(--accent)}
+h1 span{color:var(--accent);text-shadow:0 0 26px rgba(59,245,138,.28)}
 .lede{font-size:17.5px;color:var(--muted);max-width:60ch;margin:0 0 26px}
 .lede b{color:var(--ink);font-weight:500}
 .cta{display:inline-flex;align-items:center;gap:8px;font-family:var(--mono);font-size:13px;text-decoration:none;
   padding:9px 16px;border-radius:var(--r);border:1px solid var(--accent-dim);color:var(--accent);background:transparent}
 .cta:hover{background:var(--accent-soft)}
-.cta.solid{background:var(--accent);color:#17120a;border-color:var(--accent);font-weight:500}
+.cta.solid{background:var(--accent);color:#03150b;border-color:var(--accent);font-weight:500}
 :root[data-theme="light"] .cta.solid{color:#fff}
 @media (prefers-color-scheme:light){:root:not([data-theme="dark"]) .cta.solid{color:#fff}}
 
@@ -108,7 +108,7 @@ tbody tr:hover td{background:var(--raise)}
 .who{font-family:var(--mono);font-size:13px}
 .share{display:inline-flex;align-items:center;gap:9px;justify-content:flex-end}
 .meter{width:78px;height:5px;border-radius:3px;background:var(--line2);overflow:hidden;flex:none}
-.meter i{display:block;height:100%;background:var(--accent)}
+.meter i{display:block;height:100%;background:var(--accent);box-shadow:0 0 9px rgba(59,245,138,.45)}
 tr.out .meter i{background:var(--bad);box-shadow:none}
 tr.out td{color:var(--faint)}
 .tag{font-family:var(--mono);font-size:10.5px;font-weight:600;padding:1px 7px;border-radius:2px;letter-spacing:.05em;
@@ -169,8 +169,8 @@ footer{margin-top:72px;padding-top:18px;border-top:1px solid var(--line);color:v
   <canvas id="walk" aria-hidden="true"></canvas>
   <div class="hero-in">
     <h1>Put your GPU on a bounty that has been open since <span>1997</span>.</h1>
-    <p class="lede">Certicom's ECCp-131 challenge pays <b>$20,000</b> to whoever computes one discrete logarithm. It takes about <b>6.5 × 10<sup>19</sup></b> elliptic-curve steps, roughly three weeks of a thousand consumer GPUs. RhoNet is the pool that lets strangers do it together: <b>every verified step earns credit, and when two walks collide the prize splits pro rata.</b></p>
-    <a class="cta solid" href="#join">Run a miner</a>
+    <p class="lede">Certicom's ECCp-131 challenge pays <b>$20,000</b> to whoever computes one discrete logarithm. It takes about <b>6.5 × 10<sup>19</sup></b> elliptic-curve steps, roughly three weeks of a thousand consumer GPUs. RhoNet is how strangers search it together: <b>every verified step earns credit, and whoever contributed shares the prize when the answer falls out.</b></p>
+    <a class="cta solid" href="#join">Join the search</a>
     <a class="cta" href="#board" style="margin-left:8px">See the board</a>
   </div>
 
@@ -192,7 +192,7 @@ footer{margin-top:72px;padding-top:18px;border-top:1px solid var(--line);color:v
     </div>
     <div class="tbl">
     <table>
-      <thead><tr><th class="rk">#</th><th>Payout address</th><th class="r">Credits</th><th class="r">Share</th><th class="r">Pro-rata split</th><th class="r">Segments replayed</th></tr></thead>
+      <thead><tr><th class="rk">#</th><th>Credit address</th><th class="r">Credits</th><th class="r">Share</th><th class="r">Pro-rata split</th><th class="r">Segments replayed</th></tr></thead>
       <tbody>
         <tr><td class="rk top">01</td><td class="who">0x0000…a11ce</td><td class="r num">100.438</td>
             <td class="r"><span class="share"><span class="meter"><i style="width:47.8%"></i></span><span class="num">47.8%</span></span></td>
@@ -203,29 +203,29 @@ footer{margin-top:72px;padding-top:18px;border-top:1px solid var(--line);color:v
         <tr><td class="rk">03</td><td class="who">0x0000…0ca01</td><td class="r num">35.391</td>
             <td class="r"><span class="share"><span class="meter"><i style="width:16.8%"></i></span><span class="num">16.8%</span></span></td>
             <td class="r num">1,683.89</td><td class="r num">56 ✓</td></tr>
-        <tr class="out"><td class="rk">—</td><td class="who">0x0000…a0d0 <span class="tag">slashed</span></td>
+        <tr class="out"><td class="rk">—</td><td class="who">0x0000…a0d0 <span class="tag">disqualified</span></td>
             <td class="r num">0.000</td><td class="r"><span class="share"><span class="meter"></span><span class="num">0%</span></span></td><td class="r num">0.00</td><td class="r">submitted a forged point</td></tr>
-        <tr class="out"><td class="rk">—</td><td class="who">0x0000…e0a5 <span class="tag">slashed</span></td>
+        <tr class="out"><td class="rk">—</td><td class="who">0x0000…e0a5 <span class="tag">disqualified</span></td>
             <td class="r num">0.000</td><td class="r"><span class="share"><span class="meter"></span><span class="num">0%</span></span></td><td class="r num">0.00</td><td class="r">forged, and filtered its work to dodge the audit</td></tr>
       </tbody>
     </table>
     </div>
-    <div class="pfoot">Shares track the three honest miners' process counts, 3 : 2 : 1. Both adversaries were caught by the epoch audit and forfeited everything, including the one that tried to predict which of its work would be replayed. The work, the audit and the split are real; the pool is not. No contract has been deployed and nobody has been paid.</div>
+    <div class="pfoot">Shares track the three honest contributors' process counts, 3 : 2 : 1. Both forgers were caught by the epoch audit and forfeited everything, including the one that tried to predict which of its work would be replayed. The work, the audit and the split are real; the pool is not. No contract has been deployed and nobody has been paid.</div>
   </div>
 </section>
 
 <section id="join">
   <div class="shead"><h2>Join</h2><span class="rule"></span><span class="note">three commands</span></div>
   <div class="panel" style="padding:20px">
-    <h3>Your machine mints its own admission, then starts walking.</h3>
-    <p style="color:var(--muted);font-size:14.5px;margin:0 0 14px">A ticket is real curve work, so a botnet gets no advantage over an honest GPU. Credits accrue to the address you name and survive you switching the machine off.</p>
-<pre><span class="c"># clone, install, point a miner at a round</span>
+    <h3>Your machine admits itself, then starts walking.</h3>
+    <p style="color:var(--muted);font-size:14.5px;margin:0 0 14px">Admission is real curve work, so a rented botnet gets no advantage over an honest GPU. Credit accrues to the address you name and survives you switching the machine off.</p>
+<pre><span class="c"># clone, install, point a walker at an open search</span>
 git clone https://github.com/iotexproject/rhonet &amp;&amp; cd rhonet
 python3 -m venv .venv &amp;&amp; .venv/bin/pip install fastapi <span class="p">'uvicorn[standard]'</span> cryptography httpx
-.venv/bin/python -m rhonet.miner --coordinator https://<span class="p">&lt;round host&gt;</span> --payout <span class="p">0x&lt;your address&gt;</span>
+.venv/bin/python -m rhonet.walker --coordinator https://<span class="p">&lt;round host&gt;</span> --payout <span class="p">0x&lt;your address&gt;</span>
 
 <span class="c"># or run the whole system yourself: a fresh curve, a coordinator, three</span>
-<span class="c"># honest miners and two cheaters, solved and settled in about two minutes</span>
+<span class="c"># honest contributors and two forgers, solved and settled in about two minutes</span>
 ./demo.sh</pre>
   </div>
 </section>

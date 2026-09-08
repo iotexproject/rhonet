@@ -25,15 +25,15 @@ trap cleanup EXIT
 sleep 1.5
 kill -0 "$COORD"
 echo "dashboard: http://127.0.0.1:$PORT/"
-$PY -m rhonet.miner --coordinator "http://127.0.0.1:$PORT" --key data/alice.key --payout 0x00000000000000000000000000000000000a11ce --procs 3 > "$LOG_DIR/alice.log" 2>&1 &
+$PY -m rhonet.walker --coordinator "http://127.0.0.1:$PORT" --key data/alice.key --payout 0x00000000000000000000000000000000000a11ce --procs 3 > "$LOG_DIR/alice.log" 2>&1 &
 MINERS+=("$!")
-$PY -m rhonet.miner --coordinator "http://127.0.0.1:$PORT" --key data/mallory.key --payout 0x00000000000000000000000000000000000ba0d0 --procs 1 --cheat > "$LOG_DIR/mallory.log" 2>&1 &
+$PY -m rhonet.walker --coordinator "http://127.0.0.1:$PORT" --key data/mallory.key --payout 0x00000000000000000000000000000000000ba0d0 --procs 1 --cheat > "$LOG_DIR/mallory.log" 2>&1 &
 MINERS+=("$!")
-$PY -m rhonet.miner --coordinator "http://127.0.0.1:$PORT" --key data/evasive.key --payout 0x000000000000000000000000000000000000e0a5 --procs 1 --cheat-evasive > "$LOG_DIR/evasive.log" 2>&1 &
+$PY -m rhonet.walker --coordinator "http://127.0.0.1:$PORT" --key data/evasive.key --payout 0x000000000000000000000000000000000000e0a5 --procs 1 --cheat-evasive > "$LOG_DIR/evasive.log" 2>&1 &
 MINERS+=("$!")
-$PY -m rhonet.miner --coordinator "http://127.0.0.1:$PORT" --key data/bob.key   --payout 0x0000000000000000000000000000000000000b0b --procs 2 > "$LOG_DIR/bob.log" 2>&1 &
+$PY -m rhonet.walker --coordinator "http://127.0.0.1:$PORT" --key data/bob.key   --payout 0x0000000000000000000000000000000000000b0b --procs 2 > "$LOG_DIR/bob.log" 2>&1 &
 MINERS+=("$!")
-$PY -m rhonet.miner --coordinator "http://127.0.0.1:$PORT" --key data/carol.key --payout 0x000000000000000000000000000000000000ca01 --procs 1 > "$LOG_DIR/carol.log" 2>&1 &
+$PY -m rhonet.walker --coordinator "http://127.0.0.1:$PORT" --key data/carol.key --payout 0x000000000000000000000000000000000000ca01 --procs 1 > "$LOG_DIR/carol.log" 2>&1 &
 MINERS+=("$!")
 while true; do
   S=$(curl -sf "http://127.0.0.1:$PORT/api/status" || echo '{}')

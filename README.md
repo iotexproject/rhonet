@@ -29,15 +29,16 @@ are not mathematical:
 - **Nobody is paid until the end.** A round can run for months. Volunteers who leave early
   have historically gotten nothing.
 
-RhoNet is a mining pool for cryptanalysis. It borrows what Bitcoin pools got right
-(shares, proportional payout, pull-based claims) and adds what a cryptanalytic challenge needs:
+RhoNet is collective discovery for open cryptographic challenges. It borrows the accounting
+that mining pools got right (shares, proportional payout, pull-based claims) and adds what a
+public cryptanalytic challenge needs:
 permissionless admission through a curve-native ticket, sampled replay with slashing, and
 on-chain pro-rata settlement of a prize locked before the first step.
 
 ## How it works
 
 ```
-   round spec (static)          miner                      coordinator                  Ethereum L2
+   round spec (static)          walker                     coordinator                  Ethereum L2
    ─────────────────       ────────────────           ─────────────────────         ────────────────
    curve, Q = k·G          Ed25519 identity  ──────►  ticket replayed once           PrizeVault
    w, r, ticket_d          curve-native ticket        slow-start quota               pool pre-funded
@@ -57,17 +58,17 @@ pool is divided once, after the collision, in proportion to credits minted in th
 There is no block reward, no halving, no treasury, no vote.
 
 **Nobody issues seeds.** A walker's start point is `PRF(round_id, pubkey, t)`. Anyone can
-recompute any walk from public data, so the coordinator is stateless with respect to miners
+recompute any walk from public data, so the coordinator issues no work
 and an auditor can re-verify any segment offline.
 
-**Admission is the same kernel as mining.** A ticket is a walk from
+**Admission is the same kernel as the search.** A ticket is a walk from
 `PRF(round_id, pubkey, nonce)` until `x` has `ticket_d` trailing zero bits. It costs a
 weak device a few seconds and gives a botnet or an ASIC no advantage over an honest GPU.
 The coordinator replays it once per identity; quota then doubles every epoch.
 
 **Cheating is caught by replay, not by proof.** A sample of submitted segments is walked
 again from its PRF start. Selection happens after the batch is sealed, seeded by the epoch's
-Merkle root mixed with a beacon the miner cannot compute in advance, so a forger cannot know
+Merkle root mixed with a beacon no participant can compute in advance, so a forger cannot know
 what will be picked; work identifiers are sequential per identity, so it cannot choose them
 either. A second pass re-audits older points the first pass never chose. One failure slashes
 the identity, zeroes its credits and blocks re-admission under that key. Both sides of a
@@ -75,8 +76,8 @@ candidate collision are replayed before `k` is trusted.
 
 **Settlement is pull-based.** Every epoch the coordinator posts one Merkle root of
 `(payout address, credited steps)`. After the solve it posts the final root and the total;
-each miner sends one `claim(steps, proof)` transaction. Operator gas does not scale with
-the number of miners. Abort is a condition rather than a decision: an external solve, a
+each contributor sends one `claim(steps, proof)` transaction. Operator gas does not scale with
+the number of contributors. Abort is a condition rather than a decision: an external solve, a
 deadline, or coordinator silence must be provable on chain and callable by anyone, and each
 sponsor recovers their own deposit.
 
@@ -84,7 +85,7 @@ sponsor recovers their own deposit.
 
 ```bash
 python3 -m venv .venv && .venv/bin/pip install fastapi 'uvicorn[standard]' cryptography httpx
-./demo.sh                     # 56-bit round, coordinator, 3 honest miners + 1 cheater, ~2 min
+./demo.sh                     # 56-bit round, coordinator, 3 honest contributors + 2 forgers
 open http://127.0.0.1:8642    # dashboard
 ```
 
@@ -93,17 +94,17 @@ By hand:
 ```bash
 python -m rhonet.gencurve --bits 56 --out rounds/r56.json     # prime-order curve + secret k (toy only)
 python -m rhonet.coordinator --round rounds/r56.json          # http://127.0.0.1:8642
-python -m rhonet.miner --procs 4 --payout 0x<your address>    # ticket, walk, submit
-python -m rhonet.miner --cheat                                # watch it get slashed
+python -m rhonet.walker --procs 4 --payout 0x<your address>    # ticket, walk, submit
+python -m rhonet.walker --cheat                                # watch it get slashed
 python tests/test_ec.py                                           # offline math
 cd contracts && forge install foundry-rs/forge-std --no-git && forge test
 ```
 
-What a demo run looks like (56-bit curve, one laptop, three honest miners and two adversaries):
+What a demo run looks like (56-bit curve, one laptop, three honest contributors and two forgers):
 
 | | |
 |---|---|
-| Honest miners | paid 47.8% / 35.4% / 16.8%, matching their process counts |
+| Honest contributors | credited 47.8% / 35.4% / 16.8%, matching their process counts |
 | Adversaries | a naive forger and one that filters its work identifiers to dodge the audit; both slashed |
 | Solution | `k` verified against the generator's secret on every run |
 | Ledger | epoch roots with published beacon commitments and reveals; proofs verify in Python and on chain |
@@ -128,7 +129,7 @@ rhonet/ec.py           curve arithmetic, r-adding walks, batched inversion, PRF 
 rhonet/merkle.py       sha256 Merkle tree, byte-identical to PrizeVault.sol
 rhonet/gencurve.py     random prime-order curves by BSGS point counting (toy sizes)
 rhonet/coordinator.py  FastAPI + sqlite: admission, intake, replays, ledger, epochs, API, dashboard
-rhonet/miner.py        identity, ticket, worker processes, signed batches, --cheat
+rhonet/walker.py        identity, ticket, worker processes, signed batches, --cheat
 rhonet/static/         dashboard (single file, no build)
 contracts/                 PrizeVault.sol + forge tests against a Python-generated fixture
 docs/                      project site (GitHub Pages)
@@ -141,7 +142,7 @@ demo.sh                    end-to-end run
 ```
 GET  /api/round                    round spec
 GET  /api/status                   progress, rate, counts, latest root, solution
-GET  /api/miners                   leaderboard
+GET  /api/contributors             leaderboard
 GET  /api/epochs                   ledger roots
 GET  /api/events                   admissions, replays, slashes, epochs, solve
 GET  /api/proof?payout_addr=0x..   Merkle proof against the latest root
@@ -173,7 +174,7 @@ POST /api/submit                   {round_id, pubkey, dps:[{x,y,a,b,t,steps}], s
 - A transferable token, block rewards, halvings, governance. One round, one pool, one root.
 - A data-availability layer. A distinguished point needs only a truncated `x` plus an identity
   and a counter, since the rest is recoverable by replay; the coordinator keeps the table,
-  miners keep their own shards, daily snapshots are published. The MVP's sqlite schema stores
+  contributors keep their own shards, daily snapshots are published. The MVP's sqlite schema stores
   decimal text and is far larger than that; the compact format is required before 131 bits.
 - Any claim about P-256. Solving 131 bits says nothing about 256; the gap is 2^62.
 

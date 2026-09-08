@@ -4,165 +4,347 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>RhoNet</title>
-<meta name="description" content="A community-owned compute network for public elliptic-curve challenges. Anyone with a GPU walks the curve; verified work mints credit; the prize settles pro rata on an Ethereum L2.">
+<meta name="description" content="Point a GPU at a 30-year-old elliptic-curve bounty. Every verified step earns credit. When two walks collide, the prize splits pro rata on chain.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Serif:ital,wght@0,400;1,400&display=swap">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;450;500;600&display=swap">
 <style>
-:root{--bg:#f2f4f6;--panel:#fff;--ink:#16202a;--muted:#5b6b78;--line:#d7dde3;--accent:#0f6e73;--accent-soft:#d6ecec;--bad:#b23a48;--good:#2f7d4f;
-  --mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;--sans:"IBM Plex Sans",system-ui,sans-serif;--serif:"IBM Plex Serif",Georgia,serif}
-@media (prefers-color-scheme:dark){:root{--bg:#0e1418;--panel:#161e24;--ink:#e6ebee;--muted:#8fa0ac;--line:#26323b;--accent:#3fbfc4;--accent-soft:#12383b;--bad:#e26b78;--good:#5fbf85}}
+:root{
+  --bg:#05080b; --panel:#0b1116; --sunk:#080d11; --raise:#101820;
+  --ink:#e9f0f3; --muted:#93a5b0; --faint:#5f7280;
+  --line:#18232b; --line2:#233240;
+  --accent:#2fdfd0; --accent-dim:#1b7d78; --accent-glow:rgba(47,223,208,.14); --grid:#0e161c;
+  --amber:#f2b544; --bad:#ff6b7f; --good:#4bd68b;
+  --mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+  --sans:"IBM Plex Sans",system-ui,-apple-system,sans-serif;
+  --r:3px;
+}
+:root[data-theme="light"]{
+  --bg:#f4f6f7; --panel:#fff; --sunk:#eef2f4; --raise:#fff;
+  --ink:#0c1418; --muted:#4d5f6b; --faint:#7d8f9b;
+  --line:#dde4e8; --line2:#c8d3da;
+  --accent:#0a7a72; --accent-dim:#0a7a72; --accent-glow:rgba(10,122,114,.10); --grid:#e7ecef;
+  --amber:#9a6b12; --bad:#b3283e; --good:#1c7047;
+}
+@media (prefers-color-scheme:light){:root:not([data-theme="dark"]){
+  --bg:#f4f6f7; --panel:#fff; --sunk:#eef2f4; --raise:#fff;
+  --ink:#0c1418; --muted:#4d5f6b; --faint:#7d8f9b;
+  --line:#dde4e8; --line2:#c8d3da;
+  --accent:#0a7a72; --accent-dim:#0a7a72; --accent-glow:rgba(10,122,114,.10); --grid:#e7ecef;
+  --amber:#9a6b12; --bad:#b3283e; --good:#1c7047;
+}}
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:16px;line-height:1.55}
-main{max-width:960px;margin:0 auto;padding:48px 24px 80px}
-nav{display:flex;justify-content:space-between;align-items:baseline;gap:16px;margin-bottom:56px}
-nav .brand{font-weight:600;letter-spacing:-.01em}
-nav a{color:var(--accent);text-decoration:none;font-size:14px;margin-left:18px}
-h1{font-family:var(--serif);font-weight:400;font-size:clamp(30px,5vw,48px);line-height:1.15;margin:0 0 18px;letter-spacing:-.01em;text-wrap:balance;max-width:20ch}
-.lede{font-size:19px;color:var(--muted);max-width:60ch;margin:0 0 28px}
-.walk{width:100%;height:120px;display:block;margin:8px 0 40px;border:1px solid var(--line);border-radius:6px;background:var(--panel)}
-h2{font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:.09em;color:var(--muted);margin:56px 0 14px}
-h3{font-size:17px;font-weight:600;margin:0 0 6px}
-p{max-width:66ch;margin:0 0 14px}
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px}
-.card{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:18px 20px}
-.card p{font-size:15px;color:var(--muted);margin:0}
-.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
-pre{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:16px 18px;font-family:var(--mono);font-size:13.5px;overflow-x:auto;line-height:1.5}
-table{width:100%;border-collapse:collapse;font-size:15px;background:var(--panel);border:1px solid var(--line);border-radius:6px;overflow:hidden}
-th{text-align:left;font-weight:500;color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.05em;padding:10px 14px;border-bottom:1px solid var(--line)}
-td{padding:10px 14px;border-bottom:1px solid var(--line);vertical-align:top}
-tr:last-child td{border-bottom:0}
-td.r,th.r{text-align:right}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:15.5px;line-height:1.6;
+  -webkit-font-smoothing:antialiased;
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:52px 52px;background-position:-1px -1px;}
+body::before{content:"";position:fixed;inset:0;pointer-events:none;
+  background:radial-gradient(120% 70% at 50% -10%,var(--accent-glow),transparent 60%);}
+main{position:relative;max-width:1080px;margin:0 auto;padding:0 24px 96px}
+a{color:var(--accent);text-underline-offset:3px}
+.mono,.num{font-family:var(--mono);font-variant-numeric:tabular-nums;font-feature-settings:"zero" 1}
+
+/* nav */
+nav{display:flex;justify-content:space-between;align-items:center;gap:16px;padding:20px 0;flex-wrap:wrap;
+  border-bottom:1px solid var(--line)}
+.brand{font-family:var(--mono);font-weight:600;font-size:15px;letter-spacing:.02em}
+.brand em{color:var(--accent);font-style:normal}
+.links a{font-family:var(--mono);font-size:12.5px;margin-left:18px;text-decoration:none;color:var(--faint);
+  text-transform:lowercase;letter-spacing:.02em}
+.links a:hover{color:var(--accent)}
+
+/* hero */
+.hero{position:relative;padding:52px 0 0}
+canvas#walk{position:absolute;inset:auto 0 0 0;top:0;width:100%;height:100%;opacity:.5;pointer-events:none}
+.hero-in{position:relative}
+h1{font-weight:600;font-size:clamp(31px,4.9vw,50px);line-height:1.08;margin:0 0 18px;letter-spacing:-.032em;
+  text-wrap:balance;max-width:17ch}
+h1 span{color:var(--accent)}
+.lede{font-size:17.5px;color:var(--muted);max-width:60ch;margin:0 0 26px}
+.lede b{color:var(--ink);font-weight:500}
+.cta{display:inline-flex;align-items:center;gap:8px;font-family:var(--mono);font-size:13px;text-decoration:none;
+  padding:9px 16px;border-radius:var(--r);border:1px solid var(--accent-dim);color:var(--accent);background:transparent}
+.cta:hover{background:var(--accent-glow)}
+.cta.solid{background:var(--accent);color:#03110f;border-color:var(--accent);font-weight:500}
+:root[data-theme="light"] .cta.solid{color:#fff}
+@media (prefers-color-scheme:light){:root:not([data-theme="dark"]) .cta.solid{color:#fff}}
+
+/* readout strip */
+.strip{display:grid;grid-template-columns:repeat(auto-fit,minmax(146px,1fr));gap:1px;background:var(--line);
+  border:1px solid var(--line);border-radius:var(--r);overflow:hidden;margin-top:44px}
+.strip div{background:var(--panel);padding:13px 15px}
+.strip .l{font-family:var(--mono);font-size:10.5px;text-transform:uppercase;letter-spacing:.11em;color:var(--faint)}
+.strip .v{font-family:var(--mono);font-size:18px;font-weight:500;margin-top:5px;letter-spacing:-.01em}
+.strip .v small{font-size:11.5px;color:var(--faint);font-weight:400;margin-left:5px;letter-spacing:0}
+.dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--amber);margin-right:8px;
+  vertical-align:middle;box-shadow:0 0 0 3px color-mix(in srgb,var(--amber) 22%,transparent)}
+
+/* sections */
+section{margin-top:72px;scroll-margin-top:20px}
+.shead{display:flex;align-items:baseline;gap:14px;margin-bottom:18px}
+.shead h2{font-family:var(--mono);font-size:11.5px;font-weight:600;text-transform:uppercase;letter-spacing:.14em;
+  color:var(--accent);margin:0;white-space:nowrap}
+.shead .rule{flex:1;height:1px;background:var(--line2)}
+.shead .note{font-family:var(--mono);font-size:11.5px;color:var(--faint);white-space:nowrap}
+h3{font-size:16.5px;font-weight:600;margin:0 0 6px;letter-spacing:-.01em}
+p{max-width:68ch}
+
+/* panels & tables */
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--r)}
+.phead{display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap;
+  padding:14px 18px;border-bottom:1px solid var(--line);background:var(--sunk)}
+.phead h3{margin:0;font-family:var(--mono);font-size:13.5px;font-weight:600;letter-spacing:0}
+.phead .sub{font-family:var(--mono);font-size:11.5px;color:var(--faint)}
 .tbl{overflow-x:auto}
-.shot{border:1px solid var(--line);border-radius:6px;overflow:hidden;background:var(--panel)}
-.shot img{display:block;width:100%;max-width:100%}
-.cap{font-size:13px;color:var(--muted);margin-top:8px}
-.tag{display:inline-block;font-size:12px;font-weight:600;padding:2px 9px;border-radius:999px;background:var(--accent-soft);color:var(--accent);vertical-align:middle;margin-left:8px}
-ol{padding-left:20px;max-width:66ch}
-ol li{margin-bottom:8px}
-footer{margin-top:64px;color:var(--muted);font-size:13px;border-top:1px solid var(--line);padding-top:18px}
-footer a{color:var(--accent)}
-.cta{display:inline-block;background:var(--accent);color:#fff;text-decoration:none;padding:10px 18px;border-radius:5px;font-weight:500;margin-right:12px}
-.cta.alt{background:transparent;color:var(--accent);border:1px solid var(--accent)}
-.notice{border:1px solid var(--bad);border-left-width:3px;border-radius:5px;background:var(--panel);padding:14px 18px;margin:0 0 28px}
-.notice b{color:var(--bad)}
-.notice p{margin:6px 0 0;font-size:15px;color:var(--muted);max-width:70ch}
-@media (prefers-reduced-motion:reduce){.walk{display:none}}
+table{width:100%;border-collapse:collapse;font-size:14px}
+th{font-family:var(--mono);text-align:left;font-weight:500;color:var(--faint);font-size:10.5px;text-transform:uppercase;
+  letter-spacing:.11em;padding:11px 18px;border-bottom:1px solid var(--line);white-space:nowrap}
+td{padding:13px 18px;border-bottom:1px solid var(--line)}
+tbody tr:last-child td{border-bottom:0}
+td.r,th.r{text-align:right}
+tbody tr:hover td{background:var(--raise)}
+
+/* leaderboard specifics */
+.rk{font-family:var(--mono);color:var(--faint);width:3ch}
+.rk.top{color:var(--accent)}
+.who{font-family:var(--mono);font-size:13px}
+.share{display:inline-flex;align-items:center;gap:9px;justify-content:flex-end}
+.meter{width:78px;height:5px;border-radius:3px;background:var(--line2);overflow:hidden;flex:none}
+.meter i{display:block;height:100%;background:var(--accent);box-shadow:0 0 10px var(--accent-glow)}
+tr.out .meter i{background:var(--bad);box-shadow:none}
+tr.out td{color:var(--faint)}
+.tag{font-family:var(--mono);font-size:10.5px;font-weight:600;padding:1px 7px;border-radius:2px;letter-spacing:.05em;
+  text-transform:uppercase;border:1px solid var(--bad);color:var(--bad)}
+.pfoot{padding:13px 18px;font-size:13px;color:var(--muted);background:var(--sunk);border-top:1px solid var(--line)}
+
+/* join */
+pre{background:var(--sunk);border:1px solid var(--line);border-radius:var(--r);padding:16px 18px;margin:0;
+  font-family:var(--mono);font-size:12.5px;line-height:1.85;overflow-x:auto;color:var(--ink)}
+pre .c{color:var(--faint)}
+pre .p{color:var(--accent)}
+
+/* numbered flow */
+.steps{list-style:none;margin:0;padding:0;counter-reset:s;border:1px solid var(--line);border-radius:var(--r);
+  background:var(--panel)}
+.steps li{counter-increment:s;display:grid;grid-template-columns:44px minmax(0,1fr);align-items:start;
+  padding:16px 18px;border-bottom:1px solid var(--line)}
+.steps li:last-child{border-bottom:0}
+.steps li::before{content:counter(s,decimal-leading-zero);font-family:var(--mono);font-size:12px;color:var(--accent);
+  padding-top:2px;letter-spacing:.05em}
+.steps b{font-weight:600;display:block;margin-bottom:3px}
+.steps p{margin:0;color:var(--muted);font-size:14.5px;max-width:78ch}
+
+/* cards */
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(258px,1fr));gap:14px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:18px 20px;position:relative}
+.card::after{content:"";position:absolute;left:-1px;top:-1px;width:22px;height:1px;background:var(--accent);opacity:.7}
+.card p{font-size:14px;color:var(--muted);margin:0}
+.card h3{font-size:15px}
+
+.notice{border:1px solid var(--line);border-left:2px solid var(--amber);border-radius:var(--r);background:var(--panel);
+  padding:16px 20px}
+.notice b{display:block;margin-bottom:5px;font-family:var(--mono);font-size:13.5px}
+.notice p{margin:0;font-size:14.5px;color:var(--muted);max-width:76ch}
+
+.fine{color:var(--faint);font-size:13.5px;margin-top:14px}
+
+footer{margin-top:72px;padding-top:18px;border-top:1px solid var(--line);color:var(--faint);font-size:12.5px;
+  font-family:var(--mono);display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap}
+@media (prefers-reduced-motion:reduce){canvas#walk{display:none}}
+@media (max-width:640px){body{background-size:36px 36px}.hero{padding-top:36px}}
 </style>
 </head>
 <body>
 <main>
-<nav><span class="brand">RhoNet</span><span><a href="#how">How it works</a><a href="#demo">Demo</a><a href="#calibration">Calibration</a><a href="#ladder">The ladder</a><a href="https://github.com/iotexproject/rhonet">GitHub</a></span></nav>
 
-<h1>A crowd of walkers on a curve, paid the moment two of them collide.</h1>
-<p class="lede">RhoNet is a mining pool for cryptanalysis. Anyone with a GPU runs Pollard rho against a public elliptic-curve challenge, every unit of verified work mints one credit, and the prize is split once, pro rata, when the round is solved.</p>
-<p><a class="cta" href="https://github.com/iotexproject/rhonet">Read the code</a><a class="cta alt" href="https://github.com/iotexproject/rhonet#run-it">Run the demo</a></p>
-<canvas class="walk" id="walk" aria-hidden="true"></canvas>
+<nav>
+  <span class="brand">rho<em>net</em></span>
+  <span class="links">
+    <a href="#board">leaderboard</a>
+    <a href="#join">join</a>
+    <a href="#paid">payment</a>
+    <a href="#trust">verification</a>
+    <a href="https://github.com/iotexproject/rhonet">github</a>
+  </span>
+</nav>
 
-<div class="notice">
-  <b>Demonstrator. Nothing here should hold money yet.</b>
-  <p>This code has been through an external security review and an adversarial review of the repair. Everything found so far is fixed, and the work continues in the open, finding by finding, at <a href="https://github.com/iotexproject/rhonet/blob/main/review/2026-09-08-external-review.md">review/2026-09-08-external-review.md</a>. The payout mechanics described below run end to end on toy curves; no public round has been opened and no prize has been settled on chain.</p>
+<div class="hero">
+  <canvas id="walk" aria-hidden="true"></canvas>
+  <div class="hero-in">
+    <h1>Put your GPU on a bounty that has been open since <span>1997</span>.</h1>
+    <p class="lede">Certicom's ECCp-131 challenge pays <b>$20,000</b> to whoever computes one discrete logarithm. It takes about <b>6.5 × 10<sup>19</sup></b> elliptic-curve steps, roughly three weeks of a thousand consumer GPUs. RhoNet is the pool that lets strangers do it together: <b>every verified step earns credit, and when two walks collide the prize splits pro rata.</b></p>
+    <a class="cta solid" href="#join">Run a miner</a>
+    <a class="cta" href="#board" style="margin-left:8px">See the board</a>
+  </div>
+
+  <div class="strip">
+    <div><div class="l">Live round</div><div class="v"><span class="dot"></span>none open</div></div>
+    <div><div class="l">Next target</div><div class="v">ECCp-131 <small>$20,000</small></div></div>
+    <div><div class="l">Work required</div><div class="v">6.5e19 <small>steps</small></div></div>
+    <div><div class="l">On 1,000 GPUs</div><div class="v">~19 <small>days</small></div></div>
+    <div><div class="l">Credit unit</div><div class="v">2^30 <small>steps</small></div></div>
+  </div>
 </div>
 
-<h2>Why this is hard to organize</h2>
-<div class="grid">
-  <div class="card"><h3>The trust cliff</h3><p>Whoever coordinates sees the collision first and holds the key. Volunteers have no reason to believe they will be paid, so the prize has to be locked before the first step.</p></div>
-  <div class="card"><h3>Cheating is free</h3><p>A distinguished point is a few dozen bytes. Forging one costs nothing unless someone replays the walk that produced it, and the replay has to be unpredictable or a forger simply avoids it.</p></div>
-  <div class="card"><h3>Paid only at the end</h3><p>A round can run for months. Whoever leaves early needs a claim on the prize that survives their departure, or the crowd thins exactly when it is needed.</p></div>
-</div>
+<section id="board">
+  <div class="shead"><h2>Leaderboard</h2><span class="rule"></span><span class="note">last completed round</span></div>
+  <div class="panel">
+    <div class="phead">
+      <h3>demo-p56 <span style="color:var(--faint);font-weight:400">· solved</span></h3>
+      <span class="sub">56-bit curve · collision at 72% of expected work · pool 10,000 USDC</span>
+    </div>
+    <div class="tbl">
+    <table>
+      <thead><tr><th class="rk">#</th><th>Payout address</th><th class="r">Credits</th><th class="r">Share</th><th class="r">Payout</th><th class="r">Segments replayed</th></tr></thead>
+      <tbody>
+        <tr><td class="rk top">01</td><td class="who">0x0000…a11ce</td><td class="r num">100.438</td>
+            <td class="r"><span class="share"><span class="meter"><i style="width:47.8%"></i></span><span class="num">47.8%</span></span></td>
+            <td class="r num">4,778.83</td><td class="r num">126 ✓</td></tr>
+        <tr><td class="rk">02</td><td class="who">0x0000…0b0b</td><td class="r num">74.344</td>
+            <td class="r"><span class="share"><span class="meter"><i style="width:35.4%"></i></span><span class="num">35.4%</span></span></td>
+            <td class="r num">3,537.28</td><td class="r num">93 ✓</td></tr>
+        <tr><td class="rk">03</td><td class="who">0x0000…0ca01</td><td class="r num">35.391</td>
+            <td class="r"><span class="share"><span class="meter"><i style="width:16.8%"></i></span><span class="num">16.8%</span></span></td>
+            <td class="r num">1,683.89</td><td class="r num">56 ✓</td></tr>
+        <tr class="out"><td class="rk">—</td><td class="who">0x0000…a0d0 <span class="tag">slashed</span></td>
+            <td class="r num">0.000</td><td class="r"><span class="share"><span class="meter"></span><span class="num">0%</span></span></td><td class="r num">0.00</td><td class="r">submitted a forged point</td></tr>
+        <tr class="out"><td class="rk">—</td><td class="who">0x0000…e0a5 <span class="tag">slashed</span></td>
+            <td class="r num">0.000</td><td class="r"><span class="share"><span class="meter"></span><span class="num">0%</span></span></td><td class="r num">0.00</td><td class="r">forged, and filtered its work to dodge the audit</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <div class="pfoot">Shares track the three honest miners' process counts, 3 : 2 : 1. Both adversaries were caught by the epoch audit and forfeited everything, including the one that tried to predict which of its work would be replayed. This is a real run on a toy curve, not a live round.</div>
+  </div>
+</section>
 
-<h2 id="how">How it works</h2>
-<div class="grid">
-  <div class="card"><h3>One unit of work, one credit</h3><p>A distinguished point with <span class="mono">w</span> trailing zero bits stands for <span class="mono">2<sup>w</sup></span> expected steps. One credit is <span class="mono">2<sup>30</sup></span> verified steps. No block reward, no halving, no treasury, no vote.</p></div>
-  <div class="card"><h3>Nobody issues seeds</h3><p>A walker starts at <span class="mono">PRF(round, pubkey, t)</span>. Anyone can recompute any walk from public data, so the coordinator issues no work and an auditor can re-verify any walk offline.</p></div>
-  <div class="card"><h3>Admission is the same kernel</h3><p>A ticket is a walk until <span class="mono">x</span> has <span class="mono">d</span> trailing zero bits. Seconds on a weak device, replayed once, and no edge for botnets or ASICs over an honest GPU.</p></div>
-  <div class="card"><h3>Replay, not proof</h3><p>A sample of submitted segments is walked again and one failure slashes the identity. Sampling is the right verifier here: proving every step in zero knowledge costs orders of magnitude more than the work being proved.</p></div>
-  <div class="card"><h3>Pull-based settlement</h3><p>Each epoch the coordinator posts one Merkle root of (address, credited steps) to a vault on an Ethereum L2. After the solve, every miner sends one <span class="mono">claim(steps, proof)</span>.</p></div>
-  <div class="card"><h3>Abort is a condition, not a decision</h3><p>An external solve, a deadline, or coordinator silence must be provable on chain and callable by anyone, so a stalled round returns each sponsor their own deposit rather than resting on the operator's good behaviour.</p></div>
-</div>
+<section id="join">
+  <div class="shead"><h2>Join</h2><span class="rule"></span><span class="note">three commands</span></div>
+  <div class="panel" style="padding:20px">
+    <h3>Your machine mints its own admission, then starts walking.</h3>
+    <p style="color:var(--muted);font-size:14.5px;margin:0 0 14px">A ticket is real curve work, so a botnet gets no advantage over an honest GPU. Credits accrue to the address you name and survive you switching the machine off.</p>
+<pre><span class="c"># clone, install, point a miner at a round</span>
+git clone https://github.com/iotexproject/rhonet &amp;&amp; cd rhonet
+python3 -m venv .venv &amp;&amp; .venv/bin/pip install fastapi <span class="p">'uvicorn[standard]'</span> cryptography httpx
+.venv/bin/python -m rhonet.miner --coordinator https://<span class="p">&lt;round host&gt;</span> --payout <span class="p">0x&lt;your address&gt;</span>
 
-<h2 id="demo">The MVP, end to end</h2>
-<p>Everything above runs today in Python on toy curves. A 56-bit round on one laptop: three honest miners with 3, 2 and 1 processes, one cheater submitting real-looking points with invented coefficients, and one that filters its work identifiers to dodge the audit. Both are slashed by the post-commitment audit; all three honest miners are paid pro rata.</p>
-<div class="tbl"><table>
-<tr><th>Miners</th><td>3 honest, paid 47.8% / 35.4% / 16.8%, matching their process counts</td></tr>
-<tr><th>Adversaries</th><td>both slashed by the epoch audit, credits zeroed, keys blocked</td></tr>
-<tr><th>Solution</th><td>k verified against the generator's secret on every run</td></tr>
-<tr><th>Ledger</th><td>epoch roots with published beacon commitments and reveals; Merkle proofs verify in Python and inside the Solidity vault</td></tr>
-<tr><th>Tests</th><td>13 Python files and 35 Foundry tests, including a 256-run conservation fuzz</td></tr>
-</table></div>
-<div class="shot" style="margin-top:18px"><img src="dashboard.png" alt="Coordinator dashboard after a solved 56-bit round: solution, payouts, progress meter, miners, epoch roots, events"></div>
-<p class="cap">The coordinator dashboard after the round above.</p>
+<span class="c"># or run the whole system yourself: a fresh curve, a coordinator, three</span>
+<span class="c"># honest miners and two cheaters, solved and settled in about two minutes</span>
+./demo.sh</pre>
+  </div>
+</section>
 
-<h2 id="calibration">What one run proves, and what it does not</h2>
-<p>A single solve says almost nothing here. Pollard rho's completion count has a standard deviation near half its mean, so a round finishing at 40% or at 200% of expectation is ordinary. We replaced the anecdote with a calibration: 300 independent solves at each of four sizes, each one checked against the generator's secret.</p>
-<div class="tbl"><table>
-<thead><tr><th>Bits</th><th class="r">Solves</th><th class="r">Mean, in units of &#8730;n</th><th class="r">3&#963; interval of the mean</th><th class="r">10th to 90th percentile</th></tr></thead>
-<tr><td class="num">28</td><td class="r num">300</td><td class="r num">1.186</td><td class="r num">1.084 &ndash; 1.287</td><td class="r num">0.50 &ndash; 2.00</td></tr>
-<tr><td class="num">32</td><td class="r num">300</td><td class="r num">1.227</td><td class="r num">1.114 &ndash; 1.339</td><td class="r num">0.50 &ndash; 2.09</td></tr>
-<tr><td class="num">36</td><td class="r num">300</td><td class="r num">1.241</td><td class="r num">1.122 &ndash; 1.360</td><td class="r num">0.51 &ndash; 2.10</td></tr>
-<tr><td class="num">40</td><td class="r num">300</td><td class="r num">1.182</td><td class="r num">1.077 &ndash; 1.287</td><td class="r num">0.49 &ndash; 2.02</td></tr>
-</table></div>
-<p style="margin-top:14px">The theoretical constant for an r-adding walk without the negation map is 1.25. Fitting step count against group size across the four sizes gives an exponent of <span class="mono">0.5000</span> with <span class="mono">R&#178; = 0.9998</span>, which is the property that matters: cost is square-root in the group order, with the constant where theory puts it. Before the branch function was decorrelated from the distinguished-point predicate, every distinguished point took the same branch out of 128, a defect that would have surfaced only as a slightly wrong exponent.</p>
-<pre>python3 -m venv .venv &amp;&amp; .venv/bin/pip install fastapi 'uvicorn[standard]' cryptography httpx
-./demo.sh                     # 56-bit round, coordinator, 3 honest miners + 1 cheater
-open http://127.0.0.1:8642    # dashboard</pre>
+<section id="paid">
+  <div class="shead"><h2>Payment</h2><span class="rule"></span><span class="note">work in, credit out</span></div>
+  <ol class="steps">
+    <li><div><b>You walk the curve.</b><p>Your GPU follows a pseudo-random path from a start point derived from your own public key. Occasionally it lands on a <em>distinguished point</em>, one whose x-coordinate ends in enough zero bits. That is the only thing you ever send.</p></div></li>
+    <li><div><b>Each point is worth its expected work.</b><p>A point with <span class="mono">w</span> trailing zero bits stands for <span class="mono">2^w</span> steps, and one credit is <span class="mono">2^30</span> verified steps. No block reward, no halving, no treasury, no vote.</p></div></li>
+    <li><div><b>A sample of your work is replayed.</b><p>After each epoch closes, some of your segments are walked again from scratch. Which ones is decided by entropy that does not exist while you are submitting, so there is nothing to aim at. One failure forfeits everything.</p></div></li>
+    <li><div><b>Your balance is committed on chain.</b><p>Every epoch the coordinator posts one Merkle root of every address and its credited steps to a vault on an Ethereum L2, built from balances that already survived that epoch's audit.</p></div></li>
+    <li><div><b>The collision ends the round and pays everyone.</b><p>When two walks meet, the discrete logarithm falls out. The vault verifies it on chain itself, then each contributor sends one transaction and pulls their share. A prize that arrives weeks later is still claimable under the same root.</p></div></li>
+  </ol>
+</section>
 
-<h2 id="ladder">The ladder</h2>
-<div class="tbl"><table>
-<thead><tr><th>Target</th><th class="r">Expected steps</th><th>Prize</th><th>1,000 RTX 5090</th><th>Status</th></tr></thead>
-<tr><td>Certicom ECCp-109</td><td class="r mono">3.2e16</td><td>solved 2002 by 10,308 volunteers</td><td>~13 min</td><td>calibration rerun</td></tr>
-<tr><td>Certicom ECCp-131</td><td class="r mono">6.5e19</td><td>$20,000, open since 1997</td><td>~19 days</td><td>first public round</td></tr>
-<tr><td>Bitcoin puzzle #140</td><td class="r mono">1.7e21</td><td>14 BTC, bearer</td><td>~480 days</td><td>kangaroo, not implemented</td></tr>
-<tr><td>Certicom ECCp-163</td><td class="r mono">4.3e24</td><td>$30,000</td><td>~3,400 years</td><td>out of reach</td></tr>
-</table></div>
-<p style="margin-top:14px">The Certicom rungs share one walk, one ticket, one credit and one vault. The Bitcoin puzzles do not: a bounded interval calls for Pollard kangaroo with tame and wild herds, a different start construction and a different collision equation, and no kangaroo mode exists in this code. Expected steps are 1.25·√n for the rho rows and 2·√(interval) for the kangaroo row. Rates for 1,000 GPUs assume 4·10<sup>10</sup> steps per second per card, extrapolated from published 256-bit kangaroo throughput and not yet measured on a 131-bit field. Solving 131 bits says nothing about P-256; the gap is 2<sup>62</sup>.</p>
+<section id="trust">
+  <div class="shead"><h2>Verification</h2><span class="rule"></span><span class="note">why a stranger should believe any of this</span></div>
+  <div class="grid">
+    <div class="card"><h3>The prize is locked before the first step</h3><p>Funds sit in a contract, not an organizer's account. Abort is a condition, not a decision: a deadline, coordinator silence, or somebody else solving it first, each provable on chain, each callable by anyone, and each sponsor recovers their own deposit.</p></div>
+    <div class="card"><h3>The coordinator issues no work</h3><p>Start points come from the round and your public key, so anyone can recompute anyone's walk from public data. There is no secret assignment to trust and no seed server to fail.</p></div>
+    <div class="card"><h3>The audit is published, not just performed</h3><p>Each epoch commits to a random beacon before it opens and reveals it after auditing, together with exactly which segments were replayed. A third party can re-derive the audit and check it was not steered.</p></div>
+    <div class="card"><h3>The chain checks the answer</h3><p>Settlement is gated on an on-chain reveal that verifies the discrete logarithm against the round's curve. The vault does not take the operator's word that the round was won.</p></div>
+    <div class="card"><h3>Sampling beats proving</h3><p>Proving every elliptic-curve step in zero knowledge costs orders of magnitude more than the work it proves. Replaying an unpredictable sample, and forfeiting on failure, is the honest verifier for this problem.</p></div>
+    <div class="card"><h3>The failures are public too</h3><p>An external review found four critical and six high-severity defects. A second, adversarial review of the repair found more. Every one, with its reproduction and its fix, is in the repository.</p></div>
+  </div>
+</section>
 
-<h2>Roadmap</h2>
-<ol>
-<li>Pre-mine 60–80 bit rounds on the MVP to shake out the protocol.<span class="tag">now</span></li>
-<li>GPU kernel for the 131-bit field with negation map and look-ahead. Gate: measured throughput on real hardware.</li>
-<li>ECCp-109 rerun, closed then open, to calibrate quotas, replay rate and epoch length.</li>
-<li>ECCp-131 with a USDC pool in the vault plus the Certicom prize claimed by a legal entity and distributed through the same root.</li>
-<li>v2 coordinator: staked committee, each member running its own intake bucket.</li>
-<li>A bearer-asset round, such as a Bitcoin puzzle, only with a kangaroo implementation and only when the collision can be resolved without any single party learning <span class="mono">k</span> first. Puzzle #135 was taken by a single solver on 28 July 2026, which is exactly the risk this rung has to answer.</li>
-</ol>
+<section id="ladder">
+  <div class="shead"><h2>Targets</h2><span class="rule"></span><span class="note">the same walk, the same credit, the same vault</span></div>
+  <div class="panel tbl">
+    <table>
+      <thead><tr><th>Target</th><th class="r">Expected steps</th><th>Prize</th><th class="r">1,000 GPUs</th><th>Status</th></tr></thead>
+      <tbody>
+        <tr><td>Certicom ECCp-109</td><td class="r num">3.2e16</td><td>solved 2002 by 10,308 volunteers</td><td class="r num">~13 min</td><td>calibration rerun</td></tr>
+        <tr><td>Certicom ECCp-131</td><td class="r num">6.5e19</td><td>$20,000, open since 1997</td><td class="r num">~19 days</td><td>first public round</td></tr>
+        <tr><td>Bitcoin puzzle #140</td><td class="r num">1.7e21</td><td>14 BTC, bearer</td><td class="r num">~480 days</td><td>needs a kangaroo walk</td></tr>
+        <tr><td>Certicom ECCp-163</td><td class="r num">4.3e24</td><td>$30,000</td><td class="r num">~3,400 years</td><td>out of reach</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="fine">Expected steps are 1.25·√n for the rho rows and 2·√(interval) for the kangaroo row. Rates assume 4×10<sup>10</sup> steps per second per card, extrapolated from published 256-bit kangaroo throughput and not yet measured on a 131-bit field. Solving 131 bits says nothing about the 256-bit curves securing your wallet; the gap is a factor of 2<sup>62</sup>.</p>
+</section>
 
-<footer>MIT licensed. <a href="https://github.com/iotexproject/rhonet">github.com/iotexproject/rhonet</a></footer>
+<section id="calibration">
+  <div class="shead"><h2>Calibration</h2><span class="rule"></span><span class="note">1,200 solves, not one anecdote</span></div>
+  <p style="color:var(--muted)">A single solve proves almost nothing: rho's completion count has a standard deviation near half its mean, so a round ending at 40% or at 200% of expectation is unremarkable. So we solved 300 independent instances at each of four sizes and checked every answer against the generator's secret.</p>
+  <div class="panel tbl" style="margin-top:14px">
+    <table>
+      <thead><tr><th>Bits</th><th class="r">Solves</th><th class="r">Mean, in units of √n</th><th class="r">3σ interval</th><th class="r">10th–90th percentile</th></tr></thead>
+      <tbody>
+        <tr><td class="num">28</td><td class="r num">300</td><td class="r num">1.186</td><td class="r num">1.084 – 1.287</td><td class="r num">0.50 – 2.00</td></tr>
+        <tr><td class="num">32</td><td class="r num">300</td><td class="r num">1.227</td><td class="r num">1.114 – 1.339</td><td class="r num">0.50 – 2.09</td></tr>
+        <tr><td class="num">36</td><td class="r num">300</td><td class="r num">1.241</td><td class="r num">1.122 – 1.360</td><td class="r num">0.51 – 2.10</td></tr>
+        <tr><td class="num">40</td><td class="r num">300</td><td class="r num">1.182</td><td class="r num">1.077 – 1.287</td><td class="r num">0.49 – 2.02</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="fine">Theory puts the constant at 1.25 for this walk. The fitted scaling exponent is <span class="mono">0.5000</span> with <span class="mono">R² = 0.9998</span>: cost is square-root in the group size, with the constant where it belongs. Before the walk's branch function was decorrelated from the distinguished-point test, every distinguished point took the same branch out of 128 — a defect that would have surfaced only as a slightly wrong exponent.</p>
+</section>
+
+<section id="status">
+  <div class="shead"><h2>Status</h2><span class="rule"></span><span class="note">read this before sending anyone money</span></div>
+  <div class="notice">
+    <b>Demonstrator. Nothing here should hold funds yet.</b>
+    <p>The protocol runs end to end on toy curves and the settlement contract has been rewritten twice under review, but no public round has been opened and no prize has ever been settled on chain. Before ECCp-131 can start we need a GPU kernel for the 131-bit field and a measurement of its real throughput, which is the number the entire schedule above depends on. Findings, reproductions and fixes are tracked in the open at <a href="https://github.com/iotexproject/rhonet/blob/main/review/2026-09-08-external-review.md">review/2026-09-08-external-review.md</a>.</p>
+  </div>
+</section>
+
+<footer>
+  <span>MIT · <a href="https://github.com/iotexproject/rhonet">github.com/iotexproject/rhonet</a></span>
+  <span>every number here is recomputable from published round data</span>
+</footer>
 </main>
+
 <script>
-// a handful of random walks that end when two of them meet: the whole idea in one strip
+// Walkers wander the curve until two of them land on the same point.
+// That meeting is the entire product, so it is the only thing that animates.
 (() => {
   const c = document.getElementById("walk"); if (!c) return;
-  const ctx = c.getContext("2d"), dpr = devicePixelRatio || 1;
-  const col = () => getComputedStyle(document.documentElement).getPropertyValue("--accent").trim();
-  const bad = () => getComputedStyle(document.documentElement).getPropertyValue("--bad").trim();
-  let W, H, walkers, t, hit;
+  const ctx = c.getContext("2d"), dpr = Math.min(devicePixelRatio || 1, 2);
+  const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+  let W, H, walkers, hold;
+  const N = 11;
   function reset() {
-    W = c.width = c.clientWidth * dpr; H = c.height = 120 * dpr;
+    const r = c.getBoundingClientRect();
+    W = c.width = Math.max(1, r.width * dpr); H = c.height = Math.max(1, r.height * dpr);
     ctx.clearRect(0, 0, W, H);
-    walkers = Array.from({length: 9}, (_, i) => ({x: 10 * dpr, y: (12 + i * 12) * dpr + Math.random() * 6 * dpr, v: (Math.random() - .5) * 1.4}));
-    t = 0; hit = null;
+    walkers = Array.from({length: N}, (_, i) => ({
+      x: 0, y: H * (i + .5) / N, v: (Math.random() - .5) * 1.1 }));
+    hold = 0;
   }
   function frame() {
-    if (hit) { if (++t > 140) reset(); requestAnimationFrame(frame); return; }
-    ctx.strokeStyle = col(); ctx.lineWidth = 1.2 * dpr; ctx.globalAlpha = .75;
+    if (hold) { if (--hold === 0) reset(); requestAnimationFrame(frame); return; }
+    ctx.lineWidth = 1 * dpr; ctx.strokeStyle = css("--accent"); ctx.globalAlpha = .30;
     for (const w of walkers) {
       ctx.beginPath(); ctx.moveTo(w.x, w.y);
-      w.v += (Math.random() - .5) * .9; w.v *= .9;
-      w.x += 2.2 * dpr; w.y += w.v * dpr * 2;
-      w.y = Math.max(6 * dpr, Math.min(H - 6 * dpr, w.y));
+      w.v = w.v * .9 + (Math.random() - .5) * .8;
+      w.x += 1.9 * dpr; w.y = Math.max(4 * dpr, Math.min(H - 4 * dpr, w.y + w.v * dpr * 2));
       ctx.lineTo(w.x, w.y); ctx.stroke();
     }
-    for (let i = 0; i < walkers.length && !hit; i++) for (let j = i + 1; j < walkers.length; j++)
-      if (Math.abs(walkers[i].y - walkers[j].y) < 1.2 * dpr && walkers[i].x > W * .25) { hit = [i, j]; break; }
-    if (walkers[0].x > W - 10 * dpr) reset();
-    if (hit) {
-      const w = walkers[hit[0]]; ctx.globalAlpha = 1; ctx.fillStyle = bad();
-      ctx.beginPath(); ctx.arc(w.x, w.y, 4 * dpr, 0, 7); ctx.fill();
-    }
+    ctx.globalAlpha = 1;
+    for (let i = 0; i < walkers.length && !hold; i++)
+      for (let j = i + 1; j < walkers.length; j++)
+        if (Math.abs(walkers[i].y - walkers[j].y) < 1.5 * dpr && walkers[i].x > W * .35) {
+          const w = walkers[i], col = css("--accent");
+          ctx.fillStyle = col; ctx.beginPath(); ctx.arc(w.x, w.y, 3 * dpr, 0, 7); ctx.fill();
+          ctx.strokeStyle = col; ctx.globalAlpha = .45;
+          ctx.beginPath(); ctx.arc(w.x, w.y, 11 * dpr, 0, 7); ctx.stroke();
+          ctx.globalAlpha = 1; hold = 110;
+        }
+    if (walkers[0].x > W) reset();
     requestAnimationFrame(frame);
   }
-  reset(); addEventListener("resize", reset);
+  reset();
+  addEventListener("resize", () => { clearTimeout(c._t); c._t = setTimeout(reset, 150); });
   if (!matchMedia("(prefers-reduced-motion: reduce)").matches) frame();
 })();
 </script>

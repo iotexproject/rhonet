@@ -191,6 +191,18 @@ class AdmissionTests(unittest.TestCase):
         self.assertEqual(submitted[1]['dps'], [{'t': 7}, {'t': 9}])
         self.assertEqual((submitted[1]['steps_done'], submitted[1]['abandoned']), (50, 1))
 
+    def test_epoch_advance_rebuilds_submission_instead_of_losing_work(self):
+        client = Mock()
+        client.post.side_effect = [httpx.Response(400, json={'detail': 'stale submission'}),
+                                   httpx.Response(200, json={'accepted': 1})]
+        bodies = Mock(side_effect=[{'epoch': 0, 'dps': [{'t': 7}]},
+                                   {'epoch': 2, 'dps': [{'t': 7}]}])
+        with patch.object(miner.time, 'sleep'):
+            self.assertEqual(miner.post_with_retry(client, '/api/submit', bodies).status_code, 200)
+        self.assertEqual(bodies.call_count, 2)
+        self.assertEqual([c.kwargs['json']['dps'] for c in client.post.call_args_list],
+                         [[{'t': 7}], [{'t': 7}]])
+
     def test_retry_transport_and_budget(self):
         client = Mock()
         client.post.side_effect = [httpx.ConnectError('offline'), httpx.Response(200)]

@@ -30,6 +30,17 @@ from . import ec
 RETRYABLE = {429, 503, 502, 504}
 
 
+def retryable_response(response):
+    if response.status_code in RETRYABLE:
+        return True
+    if response.status_code == 400:
+        try:
+            return response.json().get("detail") == "stale submission"
+        except (ValueError, AttributeError):
+            pass
+    return False
+
+
 def post_with_retry(client, path, build_body, *, budget=300.0, label="request"):
     """Rebuild each attempt; return the last response (None on transport exhaustion)."""
     started = time.monotonic()
@@ -38,7 +49,7 @@ def post_with_retry(client, path, build_body, *, budget=300.0, label="request"):
     while True:
         try:
             response = client.post(path, json=build_body())
-            if response.status_code not in RETRYABLE:
+            if not retryable_response(response):
                 return response
             reason = f"rate limited/unavailable ({response.status_code})"
         except httpx.TransportError as exc:
@@ -203,7 +214,7 @@ def main(argv=None):
                 r = post_with_retry(client, "/api/submit",
                                     lambda: fresh_body(dps=batch, steps_done=steps_pending,
                                                        abandoned=abandoned_pending), label="submission")
-                if r is None or r.status_code in RETRYABLE:
+                if r is None or retryable_response(r):
                     print("[miner] retaining pending work; will retry submission", file=sys.stderr)
                     last_flush = time.time()
                     continue

@@ -10,37 +10,33 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;450;500;600&display=swap">
 <style>
 :root{
-  --bg:#05080b; --panel:#0b1116; --sunk:#080d11; --raise:#101820;
-  --ink:#e9f0f3; --muted:#93a5b0; --faint:#5f7280;
-  --line:#18232b; --line2:#233240;
-  --accent:#2fdfd0; --accent-dim:#1b7d78; --accent-glow:rgba(47,223,208,.14); --grid:#0e161c;
-  --amber:#f2b544; --bad:#ff6b7f; --good:#4bd68b;
+  --bg:#0a0b0d; --panel:#0f1114; --sunk:#0c0e10; --raise:#15181c;
+  --ink:#eceef1; --muted:#9aa0a8; --faint:#666c75;
+  --line:#1c2025; --line2:#272c33;
+  --accent:#ffb454; --accent-dim:#8a5f24; --accent-soft:rgba(255,180,84,.10);
+  --bad:#ff7a7a; --good:#7ad6a0;
   --mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
   --sans:"IBM Plex Sans",system-ui,-apple-system,sans-serif;
-  --r:3px;
+  --r:4px;
 }
 :root[data-theme="light"]{
-  --bg:#f4f6f7; --panel:#fff; --sunk:#eef2f4; --raise:#fff;
-  --ink:#0c1418; --muted:#4d5f6b; --faint:#7d8f9b;
-  --line:#dde4e8; --line2:#c8d3da;
-  --accent:#0a7a72; --accent-dim:#0a7a72; --accent-glow:rgba(10,122,114,.10); --grid:#e7ecef;
-  --amber:#9a6b12; --bad:#b3283e; --good:#1c7047;
+  --bg:#fbfaf8; --panel:#fff; --sunk:#f4f2ee; --raise:#f8f7f4;
+  --ink:#14161a; --muted:#565c65; --faint:#8b9099;
+  --line:#e5e2dc; --line2:#d6d2ca;
+  --accent:#a35c00; --accent-dim:#a35c00; --accent-soft:rgba(163,92,0,.08);
+  --bad:#b3283e; --good:#1c7047;
 }
 @media (prefers-color-scheme:light){:root:not([data-theme="dark"]){
-  --bg:#f4f6f7; --panel:#fff; --sunk:#eef2f4; --raise:#fff;
-  --ink:#0c1418; --muted:#4d5f6b; --faint:#7d8f9b;
-  --line:#dde4e8; --line2:#c8d3da;
-  --accent:#0a7a72; --accent-dim:#0a7a72; --accent-glow:rgba(10,122,114,.10); --grid:#e7ecef;
-  --amber:#9a6b12; --bad:#b3283e; --good:#1c7047;
+  --bg:#fbfaf8; --panel:#fff; --sunk:#f4f2ee; --raise:#f8f7f4;
+  --ink:#14161a; --muted:#565c65; --faint:#8b9099;
+  --line:#e5e2dc; --line2:#d6d2ca;
+  --accent:#a35c00; --accent-dim:#a35c00; --accent-soft:rgba(163,92,0,.08);
+  --bad:#b3283e; --good:#1c7047;
 }}
 *{box-sizing:border-box}
 html{scroll-behavior:smooth}
 body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:15.5px;line-height:1.6;
-  -webkit-font-smoothing:antialiased;
-  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
-  background-size:52px 52px;background-position:-1px -1px;}
-body::before{content:"";position:fixed;inset:0;pointer-events:none;
-  background:radial-gradient(120% 70% at 50% -10%,var(--accent-glow),transparent 60%);}
+  -webkit-font-smoothing:antialiased;}
 main{position:relative;max-width:1080px;margin:0 auto;padding:0 24px 96px}
 a{color:var(--accent);text-underline-offset:3px}
 .mono,.num{font-family:var(--mono);font-variant-numeric:tabular-nums;font-feature-settings:"zero" 1}
@@ -56,7 +52,7 @@ nav{display:flex;justify-content:space-between;align-items:center;gap:16px;paddi
 
 /* hero */
 .hero{position:relative;padding:52px 0 0}
-canvas#walk{position:absolute;inset:auto 0 0 0;top:0;width:100%;height:100%;opacity:.5;pointer-events:none}
+canvas#walk{position:absolute;inset:auto 0 0 0;top:0;width:100%;height:100%;opacity:.42;pointer-events:none}
 .hero-in{position:relative}
 h1{font-weight:600;font-size:clamp(31px,4.9vw,50px);line-height:1.08;margin:0 0 18px;letter-spacing:-.032em;
   text-wrap:balance;max-width:17ch}
@@ -65,20 +61,21 @@ h1 span{color:var(--accent)}
 .lede b{color:var(--ink);font-weight:500}
 .cta{display:inline-flex;align-items:center;gap:8px;font-family:var(--mono);font-size:13px;text-decoration:none;
   padding:9px 16px;border-radius:var(--r);border:1px solid var(--accent-dim);color:var(--accent);background:transparent}
-.cta:hover{background:var(--accent-glow)}
-.cta.solid{background:var(--accent);color:#03110f;border-color:var(--accent);font-weight:500}
+.cta:hover{background:var(--accent-soft)}
+.cta.solid{background:var(--accent);color:#17120a;border-color:var(--accent);font-weight:500}
 :root[data-theme="light"] .cta.solid{color:#fff}
 @media (prefers-color-scheme:light){:root:not([data-theme="dark"]) .cta.solid{color:#fff}}
 
 /* readout strip */
-.strip{display:grid;grid-template-columns:repeat(auto-fit,minmax(146px,1fr));gap:1px;background:var(--line);
-  border:1px solid var(--line);border-radius:var(--r);overflow:hidden;margin-top:44px}
-.strip div{background:var(--panel);padding:13px 15px}
+.strip{display:grid;grid-template-columns:repeat(auto-fit,minmax(146px,1fr));margin-top:46px;
+  border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+.strip div{padding:16px 20px 16px 0;border-left:1px solid var(--line)}
+.strip div:first-child{border-left:0;padding-left:0}
+.strip div:not(:first-child){padding-left:20px}
 .strip .l{font-family:var(--mono);font-size:10.5px;text-transform:uppercase;letter-spacing:.11em;color:var(--faint)}
 .strip .v{font-family:var(--mono);font-size:18px;font-weight:500;margin-top:5px;letter-spacing:-.01em}
 .strip .v small{font-size:11.5px;color:var(--faint);font-weight:400;margin-left:5px;letter-spacing:0}
-.dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--amber);margin-right:8px;
-  vertical-align:middle;box-shadow:0 0 0 3px color-mix(in srgb,var(--amber) 22%,transparent)}
+.dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--faint);margin-right:9px;vertical-align:middle}
 
 /* sections */
 section{margin-top:72px;scroll-margin-top:20px}
@@ -111,7 +108,7 @@ tbody tr:hover td{background:var(--raise)}
 .who{font-family:var(--mono);font-size:13px}
 .share{display:inline-flex;align-items:center;gap:9px;justify-content:flex-end}
 .meter{width:78px;height:5px;border-radius:3px;background:var(--line2);overflow:hidden;flex:none}
-.meter i{display:block;height:100%;background:var(--accent);box-shadow:0 0 10px var(--accent-glow)}
+.meter i{display:block;height:100%;background:var(--accent)}
 tr.out .meter i{background:var(--bad);box-shadow:none}
 tr.out td{color:var(--faint)}
 .tag{font-family:var(--mono);font-size:10.5px;font-weight:600;padding:1px 7px;border-radius:2px;letter-spacing:.05em;
@@ -137,12 +134,11 @@ pre .p{color:var(--accent)}
 
 /* cards */
 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(258px,1fr));gap:14px}
-.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:18px 20px;position:relative}
-.card::after{content:"";position:absolute;left:-1px;top:-1px;width:22px;height:1px;background:var(--accent);opacity:.7}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:19px 21px}
 .card p{font-size:14px;color:var(--muted);margin:0}
 .card h3{font-size:15px}
 
-.notice{border:1px solid var(--line);border-left:2px solid var(--amber);border-radius:var(--r);background:var(--panel);
+.notice{border:1px solid var(--line);border-left:2px solid var(--accent);border-radius:var(--r);background:var(--panel);
   padding:16px 20px}
 .notice b{display:block;margin-bottom:5px;font-family:var(--mono);font-size:13.5px}
 .notice p{margin:0;font-size:14.5px;color:var(--muted);max-width:76ch}
@@ -152,7 +148,7 @@ pre .p{color:var(--accent)}
 footer{margin-top:72px;padding-top:18px;border-top:1px solid var(--line);color:var(--faint);font-size:12.5px;
   font-family:var(--mono);display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap}
 @media (prefers-reduced-motion:reduce){canvas#walk{display:none}}
-@media (max-width:640px){body{background-size:36px 36px}.hero{padding-top:36px}}
+@media (max-width:640px){.hero{padding-top:36px}.strip div{padding-left:0!important;border-left:0;border-top:1px solid var(--line)}.strip div:first-child{border-top:0}}
 </style>
 </head>
 <body>
@@ -163,7 +159,7 @@ footer{margin-top:72px;padding-top:18px;border-top:1px solid var(--line);color:v
   <span class="links">
     <a href="#board">leaderboard</a>
     <a href="#join">join</a>
-    <a href="#paid">payment</a>
+    <a href="#paid">accounting</a>
     <a href="#trust">verification</a>
     <a href="https://github.com/iotexproject/rhonet">github</a>
   </span>
@@ -192,11 +188,11 @@ footer{margin-top:72px;padding-top:18px;border-top:1px solid var(--line);color:v
   <div class="panel">
     <div class="phead">
       <h3>demo-p56 <span style="color:var(--faint);font-weight:400">· solved</span></h3>
-      <span class="sub">56-bit curve · collision at 72% of expected work · pool 10,000 USDC</span>
+      <span class="sub">56-bit curve · collision at 72% of expected work · notional pool, no funds held</span>
     </div>
     <div class="tbl">
     <table>
-      <thead><tr><th class="rk">#</th><th>Payout address</th><th class="r">Credits</th><th class="r">Share</th><th class="r">Payout</th><th class="r">Segments replayed</th></tr></thead>
+      <thead><tr><th class="rk">#</th><th>Payout address</th><th class="r">Credits</th><th class="r">Share</th><th class="r">Pro-rata split</th><th class="r">Segments replayed</th></tr></thead>
       <tbody>
         <tr><td class="rk top">01</td><td class="who">0x0000…a11ce</td><td class="r num">100.438</td>
             <td class="r"><span class="share"><span class="meter"><i style="width:47.8%"></i></span><span class="num">47.8%</span></span></td>
@@ -214,7 +210,7 @@ footer{margin-top:72px;padding-top:18px;border-top:1px solid var(--line);color:v
       </tbody>
     </table>
     </div>
-    <div class="pfoot">Shares track the three honest miners' process counts, 3 : 2 : 1. Both adversaries were caught by the epoch audit and forfeited everything, including the one that tried to predict which of its work would be replayed. This is a real run on a toy curve, not a live round.</div>
+    <div class="pfoot">Shares track the three honest miners' process counts, 3 : 2 : 1. Both adversaries were caught by the epoch audit and forfeited everything, including the one that tried to predict which of its work would be replayed. The work, the audit and the split are real; the pool is not. No contract has been deployed and nobody has been paid.</div>
   </div>
 </section>
 
@@ -235,7 +231,8 @@ python3 -m venv .venv &amp;&amp; .venv/bin/pip install fastapi <span class="p">'
 </section>
 
 <section id="paid">
-  <div class="shead"><h2>Payment</h2><span class="rule"></span><span class="note">work in, credit out</span></div>
+  <div class="shead"><h2>Accounting</h2><span class="rule"></span><span class="note">designed and tested, never yet run with money</span></div>
+  <p style="color:var(--muted);margin:0 0 16px">This is how a round is meant to pay out. Every step below runs today against a local vault in tests, and none of it has ever moved real money.</p>
   <ol class="steps">
     <li><div><b>You walk the curve.</b><p>Your GPU follows a pseudo-random path from a start point derived from your own public key. Occasionally it lands on a <em>distinguished point</em>, one whose x-coordinate ends in enough zero bits. That is the only thing you ever send.</p></div></li>
     <li><div><b>Each point is worth its expected work.</b><p>A point with <span class="mono">w</span> trailing zero bits stands for <span class="mono">2^w</span> steps, and one credit is <span class="mono">2^30</span> verified steps. No block reward, no halving, no treasury, no vote.</p></div></li>
@@ -243,6 +240,10 @@ python3 -m venv .venv &amp;&amp; .venv/bin/pip install fastapi <span class="p">'
     <li><div><b>Your balance is committed on chain.</b><p>Every epoch the coordinator posts one Merkle root of every address and its credited steps to a vault on an Ethereum L2, built from balances that already survived that epoch's audit.</p></div></li>
     <li><div><b>The collision ends the round and pays everyone.</b><p>When two walks meet, the discrete logarithm falls out. The vault verifies it on chain itself, then each contributor sends one transaction and pulls their share. A prize that arrives weeks later is still claimable under the same root.</p></div></li>
   </ol>
+  <div class="notice" style="margin-top:18px;border-left-color:var(--bad)">
+    <b>What is not settled</b>
+    <p>Which rollup the vault lives on, who funds the pool before a round opens, and how a prize that is awarded to a named entity, as Certicom's is, reaches a contract that pays strangers. The operator also still chooses the settlement denominator: it can no longer overdraw the pool or lock it, but an understated total under-pays everyone and sends the difference to the operator when the claim window closes. Binding the denominator to the published leaves is the next thing we build.</p>
+  </div>
 </section>
 
 <section id="trust">

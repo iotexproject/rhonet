@@ -106,6 +106,7 @@ tbody tr:hover td{background:var(--raise)}
 .rk{font-family:var(--mono);color:var(--faint);width:3ch}
 .rk.top{color:var(--accent)}
 .who{font-family:var(--mono);font-size:13px}
+.sub2{display:block;font-family:var(--sans);font-size:12px;color:var(--faint);margin-top:3px;letter-spacing:0}
 .share{display:inline-flex;align-items:center;gap:9px;justify-content:flex-end}
 .meter{width:78px;height:5px;border-radius:3px;background:var(--line2);overflow:hidden;flex:none}
 .meter i{display:block;height:100%;background:var(--accent);box-shadow:0 0 9px rgba(59,245,138,.45)}
@@ -192,25 +193,25 @@ footer{margin-top:72px;padding-top:18px;border-top:1px solid var(--line);color:v
     </div>
     <div class="tbl">
     <table>
-      <thead><tr><th class="rk">#</th><th>Credit address</th><th class="r">Credits</th><th class="r">Share</th><th class="r">Pro-rata split</th><th class="r">Segments replayed</th></tr></thead>
+      <thead><tr><th class="rk">#</th><th>Contributor</th><th class="r">Credits</th><th class="r">Share</th><th class="r">Pro-rata split</th><th class="r">Segments replayed</th></tr></thead>
       <tbody>
-        <tr><td class="rk top">01</td><td class="who">0x0000…a11ce</td><td class="r num">100.438</td>
+        <tr><td class="rk top">01</td><td class="who">walker A <span class="sub2">3 worker processes</span></td><td class="r num">100.438</td>
             <td class="r"><span class="share"><span class="meter"><i style="width:47.8%"></i></span><span class="num">47.8%</span></span></td>
             <td class="r num">4,778.83</td><td class="r num">126 ✓</td></tr>
-        <tr><td class="rk">02</td><td class="who">0x0000…0b0b</td><td class="r num">74.344</td>
+        <tr><td class="rk">02</td><td class="who">walker B <span class="sub2">2 worker processes</span></td><td class="r num">74.344</td>
             <td class="r"><span class="share"><span class="meter"><i style="width:35.4%"></i></span><span class="num">35.4%</span></span></td>
             <td class="r num">3,537.28</td><td class="r num">93 ✓</td></tr>
-        <tr><td class="rk">03</td><td class="who">0x0000…0ca01</td><td class="r num">35.391</td>
+        <tr><td class="rk">03</td><td class="who">walker C <span class="sub2">1 worker process</span></td><td class="r num">35.391</td>
             <td class="r"><span class="share"><span class="meter"><i style="width:16.8%"></i></span><span class="num">16.8%</span></span></td>
             <td class="r num">1,683.89</td><td class="r num">56 ✓</td></tr>
-        <tr class="out"><td class="rk">—</td><td class="who">0x0000…a0d0 <span class="tag">disqualified</span></td>
-            <td class="r num">0.000</td><td class="r"><span class="share"><span class="meter"></span><span class="num">0%</span></span></td><td class="r num">0.00</td><td class="r">submitted a forged point</td></tr>
-        <tr class="out"><td class="rk">—</td><td class="who">0x0000…e0a5 <span class="tag">disqualified</span></td>
-            <td class="r num">0.000</td><td class="r"><span class="share"><span class="meter"></span><span class="num">0%</span></span></td><td class="r num">0.00</td><td class="r">forged, and filtered its work to dodge the audit</td></tr>
+        <tr class="out"><td class="rk">—</td><td class="who">walker D <span class="tag">disqualified</span><span class="sub2">forged its points outright</span></td>
+            <td class="r num">0.000</td><td class="r"><span class="share"><span class="meter"></span><span class="num">0%</span></span></td><td class="r num">0.00</td><td class="r num">0 ✓</td></tr>
+        <tr class="out"><td class="rk">—</td><td class="who">walker E <span class="tag">disqualified</span><span class="sub2">forged, and filtered its work to dodge the audit</span></td>
+            <td class="r num">0.000</td><td class="r"><span class="share"><span class="meter"></span><span class="num">0%</span></span></td><td class="r num">0.00</td><td class="r num">0 ✓</td></tr>
       </tbody>
     </table>
     </div>
-    <div class="pfoot">Shares track the three honest contributors' process counts, 3 : 2 : 1. Both forgers were caught by the epoch audit and forfeited everything, including the one that tried to predict which of its work would be replayed. The work, the audit and the split are real; the pool is not. No contract has been deployed and nobody has been paid.</div>
+    <div class="pfoot">Shares track the three honest contributors' process counts, 3 : 2 : 1. Both forgers were caught by the epoch audit and forfeited everything, including the one that tried to predict which of its work would be replayed. Credit accrues to whatever address a walker names; the demonstration uses placeholders rather than anyone's account. The work, the audit and the split are real. The pool is not: no contract has been deployed and nobody has been paid.</div>
   </div>
 </section>
 

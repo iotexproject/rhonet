@@ -56,27 +56,27 @@ class BeaconTests(unittest.TestCase):
 
     def test_delayed_catches_primary_miss(self):
         self.admit(self.coord)
-        root = merkle.build([merkle.leaf_hash(self.addr, 1 << self.spec.w)])[0]
+        root = merkle.build([])[0]
         beacon = self.coord.beacon_for(0)
-        for t in range(4096):
-            # Search explicitly for an unchecked primary miss, selected later.
-            if int.from_bytes(ec.H(root, beacon, 'spot', self.pk, t), 'big') % self.spec.spot_check_rate == 0:
-                continue
-            if int.from_bytes(ec.H(root, beacon, 'spot2', self.pk, t), 'big') % (8 * self.spec.spot_check_rate):
-                continue
+        candidates = []
+        seen = set()
+        for t in range(100):
             dp = self.point(t)
-            if dp:
+            if dp and dp['x'] not in seen:
+                candidates.append(dp)
+                seen.add(dp['x'])
+            if len(candidates) == 2:
                 break
-        else:
-            self.fail('no delayed fixture')
+        ranked = sorted(candidates, key=lambda dp: ec.H(root, beacon, 'spot', self.pk, dp['t']))
+        good, dp = ranked
         dp['a'] = (dp['a'] + 1) % self.spec.curve.n
-        self.assertEqual(self.coord.submit(self.pk, [dp])['accepted'], 1)
+        self.assertEqual(self.coord.submit(self.pk, sorted([good, dp], key=lambda d: d['t']))['accepted'], 2)
         self.advance(1)
         self.assertEqual(self.coord.miners_view()[0]['status'], 'active')
-        self.assertEqual(self.coord.db.execute('SELECT checked FROM dps').fetchone(), (0,))
+        self.assertEqual(self.coord.db.execute('SELECT checked FROM dps WHERE t=?', (dp['t'],)).fetchone(), (0,))
         self.advance(2)
         self.assertEqual(self.coord.miners_view()[0]['status'], 'slashed')
-        self.assertIsNone(self.coord.db.execute('SELECT 1 FROM dps WHERE pubkey=? AND t=?', (self.pk, t)).fetchone())
+        self.assertIsNone(self.coord.db.execute('SELECT 1 FROM dps WHERE pubkey=? AND t=?', (self.pk, dp['t'])).fetchone())
         delayed = [e['detail'] for e in self.coord.events_view() if e['kind'] == 'delayed_audit']
         self.assertTrue(any(e['failed'] == 1 for e in delayed))
 
@@ -113,17 +113,17 @@ class BeaconTests(unittest.TestCase):
             # H length-prefixes parts: dropping the beacon exactly reproduces
             # the old selector (adding b'' would NOT reproduce it).
             if len(parts) == 5 and parts[2] in ('spot', 'spot2'):
-                return original_hash(parts[0], *parts[2:])
+                return original_hash(root, *parts[2:])
             return original_hash(*parts)
         self.clock.return_value = self.coord.started_at + self.spec.epoch_seconds + 1
-        with patch.object(ec, 'H', side_effect=root_only):
+        with patch.object(ec, 'H', side_effect=root_only), patch.object(old, '_select_targets', side_effect=old._legacy_targets):
             old.close_epoch()
         self.assertEqual(old.miners_view()[0]['status'], 'active')
         self.assertGreater(old.miners_view()[0]['spot_checks'], 0)
         self.assertEqual(old.db.execute('SELECT root FROM epochs WHERE idx=0').fetchone()[0], root.hex())
         self.coord.close_epoch()
         self.assertEqual(self.coord.miners_view()[0]['status'], 'slashed')
-        self.assertEqual(self.coord.db.execute('SELECT root FROM epochs WHERE idx=0').fetchone()[0], root.hex())
+        self.assertEqual(self.coord.db.execute('SELECT root FROM epochs WHERE idx=0').fetchone()[0], merkle.build([])[0].hex())
 
     def test_commit_reveal_and_public_reproduction(self):
         client = TestClient(build_app(self.coord))
@@ -157,8 +157,12 @@ class BeaconTests(unittest.TestCase):
         candidates = client.get('/api/epochs/0/audit?kind=candidates&limit=512').json()
         detail = client.get('/api/epochs/0/audit?limit=512').json()
         for tag, inputs in candidates['audit_inputs'].items():
-            ranked = sorted((int.from_bytes(ec.H(bytes.fromhex(closed['root'][2:]), bytes.fromhex(closed['beacon_reveal']), tag, pk, t), 'big'), pk, t) for pk, t in inputs['pairs'])
-            expected.extend((pk, t) for _, pk, t in [r for r in ranked if r[0] % inputs['rate'] == 0][:inputs['cap']])
+            ranked = sorted((int.from_bytes(ec.H(bytes.fromhex(closed['audit_seed_root'][2:]), bytes.fromhex(closed['beacon_reveal']), tag, pk, t), 'big'), pk, t) for pk, t in inputs['pairs'])
+            count = (len(ranked) + inputs['rate'] - 1) // inputs['rate']
+            if tag == 'spot2' and ranked:
+                oldest = min(ranked, key=lambda r: r[2])
+                ranked = [oldest] + [r for r in ranked if r != oldest]
+            expected.extend((pk, t) for _, pk, t in ranked[:count])
             published.extend(tuple(pair) for pair in detail['audit_inputs'][tag]['pairs'])
         self.assertEqual(actual, published)
         self.assertTrue(actual)
@@ -199,7 +203,7 @@ class BeaconTests(unittest.TestCase):
             coord.close_epoch()
             self.assertEqual(fetch.call_count, 2)
             self.assertEqual(fetch.call_args.kwargs, {'timeout': 5})
-            self.assertIn('/0/' + record['root'][2:], fetch.call_args.args[0])
+            self.assertIn('/0/' + record['sealed_root'][2:], fetch.call_args.args[0])
             self.assertEqual(coord.beacon_for(0), bytes.fromhex('42' * 32))
             restarted = self.make_coord('http')
             self.assertEqual(restarted.beacon_for(0), bytes.fromhex('42' * 32))

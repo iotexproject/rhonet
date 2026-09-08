@@ -167,6 +167,30 @@ class AdmissionTests(unittest.TestCase):
         output = ''.join(c.args[0] for c in stderr.write.call_args_list)
         self.assertEqual(output.count('sent 1 DPs'), 1)
 
+    def test_partial_capacity_response_retries_original_points_in_order(self):
+        spec = ec.RoundSpec.load(str(Path(__file__).resolve().parents[1] / 'rounds/r32.json'))
+        client, ctx = Mock(), Mock()
+        client.get.side_effect = lambda path: httpx.Response(200, json=spec.to_dict() if path == '/api/round' else {'epoch': 0})
+        submitted = []
+        def post(path, json):
+            if path == '/api/ticket':
+                return httpx.Response(200, json={'epoch': 0})
+            submitted.append(json)
+            if len(submitted) == 1:
+                return httpx.Response(200, json={'accepted': 1, 'rejected': [[1, 'audit backlog'], [2, 'quota']],
+                                                'retry_indices': [1, 2], 'batch_limit': 2})
+            return httpx.Response(200, json={'accepted': 2, 'status': 'solved'})
+        client.post.side_effect = post
+        ctx.Queue.return_value.get.side_effect = [([{'t': 9}, {'t': 3}, {'t': 7}], 123, 2),
+                                                  ([{'t': 10}], 50, 1)]
+        with tempfile.TemporaryDirectory() as tmp, patch.object(miner.httpx, 'Client', return_value=client), \
+                patch.object(miner.ec, 'ticket_solve', return_value={'steps': 1, 'nonce': 0}), \
+                patch.object(miner.mp, 'get_context', return_value=ctx), patch('sys.stderr'):
+            self.assertEqual(miner.main(['--key', str(Path(tmp) / 'key'), '--procs', '1', '--flush', '0']), 0)
+        self.assertEqual(submitted[0]['dps'], [{'t': 3}, {'t': 7}, {'t': 9}])
+        self.assertEqual(submitted[1]['dps'], [{'t': 7}, {'t': 9}])
+        self.assertEqual((submitted[1]['steps_done'], submitted[1]['abandoned']), (50, 1))
+
     def test_retry_transport_and_budget(self):
         client = Mock()
         client.post.side_effect = [httpx.ConnectError('offline'), httpx.Response(200)]

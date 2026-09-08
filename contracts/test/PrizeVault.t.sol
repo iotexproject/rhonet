@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import {Test} from "forge-std/Test.sol";
+import {Test, stdError} from "forge-std/Test.sol";
 import {console2} from "forge-std/console2.sol";
 import {PrizeVault, IERC20} from "../src/PrizeVault.sol";
 import {EcMath} from "../src/EcMath.sol";
@@ -62,9 +62,24 @@ contract PrizeVaultTest is Test {
         vault.revealSolution(R.K, SALT);
     }
 
+    function _fixtureLeaves() internal pure returns (address[] memory miners, uint256[] memory steps) {
+        miners = new address[](5);
+        steps = new uint256[](5);
+        for (uint256 i; i < 5; ++i) (miners[i], steps[i],) = _fixture(i);
+    }
+
+    function _postRoot(uint64 epoch, bytes32 root) internal {
+        if (root == bytes32(0)) {
+            vault.postRoot(epoch, root, new address[](0), new uint256[](0));
+        } else {
+            (address[] memory miners, uint256[] memory steps) = _fixtureLeaves();
+            vault.postRoot(epoch, root, miners, steps);
+        }
+    }
+
     function _solveAndSettle(uint256 totalSteps) internal {
         _solve();
-        vault.postRoot(1, Fixture.ROOT);
+        _postRoot(1, Fixture.ROOT);
         vm.warp(vault.rootPostedAt() + vault.settleDelay());
         vault.settle(1, Fixture.ROOT, totalSteps);
     }
@@ -100,6 +115,71 @@ contract PrizeVaultTest is Test {
         assertEq(paid, vault.totalWithdrawn());
     }
 
+    function _sendDirect(uint256 amount) internal {
+        tok.mint(STRANGER, amount);
+        vm.prank(STRANGER);
+        tok.transfer(address(vault), amount);
+    }
+
+    function testDirectTransferExcessRecoverableAfterAbort() public {
+        _fundTwoDepositors();
+        _sendDirect(123);
+        vm.expectRevert("not finished");
+        vault.recoverExcess();
+        vm.warp(vault.deadline());
+        vault.abortOnDeadline();
+        // Recover before refunds: every tracked sponsor token must stay reserved.
+        vm.prank(STRANGER);
+        vault.recoverExcess();
+        assertEq(tok.balanceOf(address(this)), 123);
+        assertEq(tok.balanceOf(address(vault)), POOL + POOL / 2);
+        assertEq(vault.refunded(), 0);
+        assertEq(vault.sweptToOperator(), 0);
+        _assertAbortClosedAndRefunds();
+        _sendDirect(17);
+        vault.recoverExcess();
+        assertEq(tok.balanceOf(address(this)), 140);
+        assertEq(tok.balanceOf(address(vault)), 0);
+        vm.expectRevert("no excess");
+        vault.recoverExcess();
+        _assertConservation();
+    }
+
+    function testDirectTransferRecoveryAndSweepPreserveTrackedClaims() public {
+        _fund(SPONSOR, POOL);
+        _solveAndSettle(Fixture.TOTAL);
+        _sendDirect(123);
+        _claim(0);
+        uint256 tracked = POOL - vault.totalWithdrawn();
+        vm.prank(STRANGER);
+        vault.recoverExcess();
+        assertEq(tok.balanceOf(address(this)), 123);
+        assertEq(tok.balanceOf(address(vault)), tracked);
+        assertEq(vault.sweptToOperator(), 0);
+        vm.expectRevert("no excess");
+        vault.recoverExcess();
+        _sendDirect(17);
+        vm.warp(vault.settledAt() + vault.claimWindow());
+        vault.sweep();
+        assertEq(vault.sweptToOperator(), tracked);
+        assertEq(tok.balanceOf(address(vault)), 17);
+        _fund(SPONSOR2, POOL);
+        vault.recoverExcess();
+        assertEq(tok.balanceOf(address(vault)), POOL);
+        for (uint256 i; i < 5; ++i) {
+            (address who, uint256 steps,) = _fixture(i);
+            if (i == 0) {
+                vm.prank(who);
+                vault.withdraw();
+            } else {
+                _claim(i);
+            }
+            assertEq(tok.balanceOf(who), steps * POOL / Fixture.TOTAL * (i == 0 ? 2 : 1));
+        }
+        assertEq(tok.balanceOf(address(vault)), 0);
+        _assertConservation();
+    }
+
     function testT3_OperatorCannotTakeSponsorDepositAndStrangerEnablesRefund() public {
         uint256 operatorBefore = tok.balanceOf(address(this));
         _fund(SPONSOR, POOL);
@@ -131,38 +211,53 @@ contract PrizeVaultTest is Test {
         assertEq(tok.balanceOf(address(this)), operatorBefore);
     }
 
-    function testDenominatorHalf_RejectsLaterClaimantsBeforeOverdraw() public {
+    function testDenominatorHalf_RejectsAtSettleAndAllLeavesReceiveExactShares() public {
         _fund(SPONSOR, POOL);
-        _solveAndSettle(Fixture.TOTAL / 2);
-        for (uint256 i; i < 5; ++i) {
-            (address who, uint256 steps, bytes32[] memory proof) = _fixture(i);
-            uint256 beforeBalance = tok.balanceOf(address(vault));
-            vm.prank(who);
-            if (i >= 3) vm.expectRevert("denominator");
-            vault.claim(steps, proof);
-            if (i >= 3) {
-                assertEq(tok.balanceOf(address(vault)), beforeBalance);
-                assertEq(vault.registeredSteps(who), 0);
-                assertEq(tok.balanceOf(who), 0);
-            } else {
-                assertEq(tok.balanceOf(who), steps * POOL / (Fixture.TOTAL / 2));
-            }
-            _assertConservation();
-        }
-        assertEq(vault.claimedSteps(), 42_000_000);
-    }
-
-    function testDenominatorDouble_AllReceiveHalfAndSweepRecoversExactResidue() public {
-        _fund(SPONSOR, POOL);
-        _solveAndSettle(Fixture.TOTAL * 2);
+        _solve();
+        _postRoot(1, Fixture.ROOT);
+        assertEq(vault.rootLeafCountAt(1), 5);
+        assertEq(vault.rootStepsAt(1), Fixture.TOTAL);
+        vm.warp(vault.rootPostedAt() + vault.settleDelay());
+        vm.expectRevert("denominator");
+        vault.settle(1, Fixture.ROOT, Fixture.TOTAL / 2);
+        assertFalse(vault.settled());
+        vault.settle(1, Fixture.ROOT, Fixture.TOTAL);
         for (uint256 i; i < 5; ++i) {
             _claim(i);
             (address who, uint256 steps,) = _fixture(i);
-            assertEq(tok.balanceOf(who), (steps * POOL / Fixture.TOTAL) / 2);
+            assertEq(tok.balanceOf(who), steps * POOL / Fixture.TOTAL);
+            _assertConservation();
+        }
+        assertEq(vault.claimedSteps(), Fixture.TOTAL);
+        assertEq(vault.totalWithdrawn(), POOL);
+        _fund(SPONSOR2, POOL);
+        for (uint256 i; i < 5; ++i) {
+            (address who, uint256 steps,) = _fixture(i);
+            vm.prank(who);
+            vault.withdraw();
+            assertEq(tok.balanceOf(who), 2 * steps * POOL / Fixture.TOTAL);
+        }
+        _assertConservation();
+    }
+
+    function testDenominatorDouble_RejectsAtSettleAndSweepRecoversExactResidue() public {
+        _fund(SPONSOR, POOL);
+        _solve();
+        _postRoot(1, Fixture.ROOT);
+        vm.warp(vault.rootPostedAt() + vault.settleDelay());
+        vm.expectRevert("denominator");
+        vault.settle(1, Fixture.ROOT, Fixture.TOTAL * 2);
+        assertFalse(vault.settled());
+        vault.settle(1, Fixture.ROOT, Fixture.TOTAL);
+        // First three leaves sum to 40%; remaining 60% is swept after the window.
+        for (uint256 i; i < 3; ++i) {
+            _claim(i);
+            (address who, uint256 steps,) = _fixture(i);
+            assertEq(tok.balanceOf(who), steps * POOL / Fixture.TOTAL);
             _assertConservation();
         }
         uint256 residue = tok.balanceOf(address(vault));
-        assertEq(residue, POOL / 2);
+        assertEq(residue, POOL * 3 / 5);
         vm.expectRevert("too early");
         vault.sweep();
         vm.warp(vault.settledAt() + vault.claimWindow() + 1);
@@ -236,6 +331,9 @@ contract PrizeVaultTest is Test {
         vm.expectRevert("nothing to sweep");
         vault.sweep();
         _fund(SPONSOR, POOL);
+        vm.expectRevert("too early");
+        vault.sweep();
+        vm.warp(vault.lastDepositAt() + vault.claimWindow());
         vault.sweep();
         vm.warp(vault.lastSweepAt() + vault.claimWindow());
         vm.expectRevert("nothing to sweep");
@@ -263,6 +361,26 @@ contract PrizeVaultTest is Test {
             vault.withdraw();
             _assertConservation();
         }
+    }
+
+    function testWithdrawBeforeRegisterPreservesPriorDeposits() public {
+        _fund(SPONSOR, POOL);
+        _solveAndSettle(Fixture.TOTAL);
+        (address who, uint256 steps, bytes32[] memory proof) = _fixture(0);
+        vm.prank(who);
+        vault.withdraw();
+        assertEq(vault.accountedDeposits(who), 0);
+        assertEq(vault.withdrawn(who), 0);
+        assertEq(vault.totalWithdrawn(), 0);
+        _fund(SPONSOR2, POOL);
+        vm.prank(who);
+        vault.withdraw();
+        assertEq(vault.accountedDeposits(who), 0);
+        vm.prank(who);
+        vault.claim(steps, proof);
+        assertEq(tok.balanceOf(who), steps * (2 * POOL) / Fixture.TOTAL);
+        assertEq(vault.claimable(who), 0);
+        _assertConservation();
     }
 
     function testH2_LatePrizesAccrueUnderSameRootForExistingAndLateClaimants() public {
@@ -340,7 +458,7 @@ contract PrizeVaultTest is Test {
     }
 
     function testSolutionGate_SettleWithoutReveal() public {
-        vault.postRoot(1, Fixture.ROOT);
+        _postRoot(1, Fixture.ROOT);
         vm.warp(vault.rootPostedAt() + vault.settleDelay());
         vm.expectRevert("not solved");
         vault.settle(1, Fixture.ROOT, Fixture.TOTAL);
@@ -369,7 +487,7 @@ contract PrizeVaultTest is Test {
         vm.expectRevert("closed");
         vault.settle(1, Fixture.ROOT, Fixture.TOTAL);
         vm.expectRevert("closed");
-        vault.postRoot(2, Fixture.ROOT);
+        _postRoot(2, Fixture.ROOT);
         uint256 operatorBefore = tok.balanceOf(address(this));
         vm.prank(SPONSOR);
         vault.refundClaim();
@@ -387,7 +505,7 @@ contract PrizeVaultTest is Test {
     function testAbortOnStall_StrangerAndLastRootResetsClock() public {
         _fundTwoDepositors();
         vm.warp(block.timestamp + 12 hours);
-        vault.postRoot(1, Fixture.ROOT);
+        _postRoot(1, Fixture.ROOT);
         uint256 lastRoot = vault.lastRootAt();
         vm.warp(lastRoot + vault.stallWindow() - 1);
         vm.prank(STRANGER);
@@ -415,10 +533,64 @@ contract PrizeVaultTest is Test {
         _assertAbortClosedAndRefunds();
     }
 
+    function _externalCommit(address claimant, uint256 k) internal {
+        vm.prank(claimant);
+        vault.commitExternalSolve(keccak256(abi.encode(k, SALT, claimant)));
+    }
+
+    function testExternalSolve_MempoolRevealCannotBeFrontRun() public {
+        _fundTwoDepositors();
+        _commit(R.K);
+        vm.warp(vault.commitAt() + vault.revealDelay());
+        vm.prank(STRANGER);
+        vm.expectRevert("not committed");
+        vault.abortOnExternalSolve(R.K, SALT);
+        _externalCommit(STRANGER, R.K);
+        assertGt(vault.externalRevealDelay(), vault.revealDelay());
+        vm.prank(STRANGER);
+        vm.expectRevert("too early");
+        vault.abortOnExternalSolve(R.K, SALT);
+        vault.revealSolution(R.K, SALT);
+        vm.warp(block.timestamp + vault.externalRevealDelay());
+        vm.prank(STRANGER);
+        vm.expectRevert("solved");
+        vault.abortOnExternalSolve(R.K, SALT);
+        assertFalse(vault.aborted());
+        _postRoot(1, Fixture.ROOT);
+        vm.warp(vault.rootPostedAt() + vault.settleDelay());
+        vault.settle(1, Fixture.ROOT, Fixture.TOTAL);
+        for (uint256 i; i < 5; ++i) _claim(i);
+        assertEq(vault.totalWithdrawn(), POOL + POOL / 2);
+    }
+
+    function testExternalSolve_CommitmentIsSenderBoundAndReplacementRestartsDelay() public {
+        _externalCommit(STRANGER, R.K);
+        vm.warp(block.timestamp + vault.externalRevealDelay());
+        vault.commitExternalSolve(keccak256(abi.encode(R.K, SALT, STRANGER)));
+        vm.warp(block.timestamp + vault.externalRevealDelay());
+        vm.expectRevert("bad commitment");
+        vault.abortOnExternalSolve(R.K, SALT);
+        _externalCommit(STRANGER, R.K);
+        vm.prank(STRANGER);
+        vm.expectRevert("too early");
+        vault.abortOnExternalSolve(R.K, SALT);
+        vm.warp(block.timestamp + vault.externalRevealDelay());
+        vm.prank(STRANGER);
+        vm.expectRevert("bad commitment");
+        vault.abortOnExternalSolve(R.K, bytes32(0));
+        vm.prank(STRANGER);
+        vault.abortOnExternalSolve(R.K, SALT);
+        assertTrue(vault.aborted());
+    }
+
     function testAbortOnExternalSolve_StrangerBeforeCommit() public {
         _fundTwoDepositors();
+        _externalCommit(STRANGER, R.K);
+        vm.warp(block.timestamp + 1);
+        _commit(R.K);
+        vm.warp(vault.externalCommitAt(STRANGER) + vault.externalRevealDelay());
         vm.prank(STRANGER);
-        vault.abortOnExternalSolve(R.K);
+        vault.abortOnExternalSolve(R.K, SALT);
         _assertAbortClosedAndRefunds();
     }
 
@@ -428,7 +600,7 @@ contract PrizeVaultTest is Test {
         vault.revealSolution(R.K, SALT);
         vm.prank(STRANGER);
         vm.expectRevert("solved");
-        vault.abortOnExternalSolve(R.K);
+        vault.abortOnExternalSolve(R.K, SALT);
         assertFalse(vault.aborted());
     }
 
@@ -436,8 +608,10 @@ contract PrizeVaultTest is Test {
         uint256 operatorBefore = tok.balanceOf(address(this));
         _fundTwoDepositors();
         vault.commitSolution(keccak256("garbage"));
+        _externalCommit(STRANGER, R.K);
+        vm.warp(block.timestamp + vault.externalRevealDelay());
         vm.prank(STRANGER);
-        vault.abortOnExternalSolve(R.K);
+        vault.abortOnExternalSolve(R.K, SALT);
         _assertAbortClosedAndRefunds();
         assertEq(tok.balanceOf(address(this)), operatorBefore);
     }
@@ -478,7 +652,9 @@ contract PrizeVaultTest is Test {
         vault.clearCommitment();
         _commit(R.K);
         vm.warp(vault.commitAt() + vault.commitExpiry());
-        vault.abortOnExternalSolve(R.K);
+        _externalCommit(address(this), R.K);
+        vm.warp(block.timestamp + vault.externalRevealDelay());
+        vault.abortOnExternalSolve(R.K, SALT);
         vm.expectRevert("closed");
         vault.clearCommitment();
     }
@@ -492,6 +668,45 @@ contract PrizeVaultTest is Test {
         timing.commitExpiry = 9 minutes;
         vm.expectRevert("bad commit expiry");
         new PrizeVault(IERC20(address(tok)), bytes32(0), _roundCurve(), timing);
+    }
+
+    function testLatePrizeCannotBeSweptOnArrival() public {
+        _fund(SPONSOR, POOL);
+        _solveAndSettle(Fixture.TOTAL);
+        vm.warp(vault.settledAt() + vault.claimWindow());
+        vault.sweep();
+        // An old sweep must not let newly arrived money be swept immediately.
+        vm.warp(block.timestamp + vault.claimWindow());
+        _fund(SPONSOR2, POOL);
+        vm.expectRevert("too early");
+        vault.sweep();
+        (address alice, uint256 aliceSteps,) = _fixture(0);
+        _claim(0);
+        assertEq(tok.balanceOf(alice), aliceSteps * POOL / Fixture.TOTAL);
+        vm.warp(vault.lastDepositAt() + vault.claimWindow() - 1);
+        vm.expectRevert("too early");
+        vault.sweep();
+        (address bob, uint256 bobSteps,) = _fixture(1);
+        _claim(1);
+        assertEq(tok.balanceOf(bob), bobSteps * POOL / Fixture.TOTAL);
+        uint256 residue = POOL - tok.balanceOf(alice) - tok.balanceOf(bob);
+        vm.warp(vault.lastDepositAt() + vault.claimWindow());
+        // A zero deposit must not postpone a sweep.
+        _fund(SPONSOR2, 0);
+        vault.sweep();
+        assertEq(tok.balanceOf(address(this)), POOL + residue);
+        assertEq(tok.balanceOf(address(vault)), 0);
+        _assertConservation();
+        // Funding immediately after a sweep also gets a full window.
+        _fund(SPONSOR2, POOL);
+        vm.expectRevert("too early");
+        vault.sweep();
+        vm.prank(alice);
+        vault.withdraw();
+        vm.warp(vault.lastDepositAt() + vault.claimWindow());
+        vault.sweep();
+        assertEq(tok.balanceOf(alice), 2 * aliceSteps * POOL / Fixture.TOTAL);
+        _assertConservation();
     }
 
     function testSweepLifetimeFloorDifference_Counterexample() public {
@@ -533,34 +748,90 @@ contract PrizeVaultTest is Test {
     }
 
     function testAbortOnExternalSolve_RejectsWrongScalar() public {
+        _externalCommit(STRANGER, R.K + 1);
+        vm.warp(block.timestamp + vault.externalRevealDelay());
         vm.prank(STRANGER);
         vm.expectRevert("bad k");
-        vault.abortOnExternalSolve(R.K + 1);
+        vault.abortOnExternalSolve(R.K + 1, SALT);
         assertFalse(vault.aborted());
     }
 
+    function testRootTotals_RejectsFalseLeavesDuplicatesAndOverflow() public {
+        (address[] memory miners, uint256[] memory steps) = _fixtureLeaves();
+        steps[0] /= 2;
+        vm.expectRevert("bad leaves");
+        vault.postRoot(1, Fixture.ROOT, miners, steps);
+        assertEq(vault.rootStepsAt(1), 0);
+        (miners, steps) = _fixtureLeaves();
+        miners[1] = miners[0];
+        vm.expectRevert("leaf order");
+        vault.postRoot(1, Fixture.ROOT, miners, steps);
+        (miners, steps) = _fixtureLeaves();
+        vm.expectRevert("leaf lengths");
+        vault.postRoot(1, Fixture.ROOT, miners, new uint256[](1));
+        steps[0] = type(uint256).max;
+        vm.expectRevert(stdError.arithmeticError);
+        vault.postRoot(1, Fixture.ROOT, miners, steps);
+        _postRoot(1, Fixture.ROOT);
+        assertEq(vault.rootStepsAt(1), Fixture.TOTAL);
+    }
+
+    function testRootTotals_TwoEqualLeavesBothRegisterInEitherOrder() public {
+        address[] memory miners = new address[](2);
+        uint256[] memory steps = new uint256[](2);
+        miners[0] = address(1);
+        miners[1] = address(2);
+        steps[0] = 50;
+        steps[1] = 50;
+        bytes32 aLeaf = vault.leaf(miners[0], 50);
+        bytes32 bLeaf = vault.leaf(miners[1], 50);
+        bytes32 pairRoot = aLeaf < bLeaf
+            ? sha256(abi.encodePacked(aLeaf, bLeaf)) : sha256(abi.encodePacked(bLeaf, aLeaf));
+        _fund(SPONSOR, 100);
+        _solve();
+        vault.postRoot(1, pairRoot, miners, steps);
+        vm.warp(vault.rootPostedAt() + vault.settleDelay());
+        vm.expectRevert("denominator");
+        vault.settle(1, pairRoot, 50);
+        vault.settle(1, pairRoot, 100);
+        uint256 snapshot = vm.snapshotState();
+        for (uint256 order; order < 2; ++order) {
+            bytes32[] memory proof = new bytes32[](1);
+            for (uint256 i; i < 2; ++i) {
+                uint256 index = order == 0 ? i : 1 - i;
+                proof[0] = index == 0 ? bLeaf : aLeaf;
+                vm.prank(miners[index]);
+                vault.claim(50, proof);
+                assertEq(tok.balanceOf(miners[index]), 50);
+            }
+            assertEq(vault.claimedSteps(), 100);
+            assertEq(vault.totalWithdrawn(), 100);
+            if (order == 0) assertTrue(vm.revertToState(snapshot));
+        }
+    }
+
     function testRootMonotonicity_RejectsEqualAndEarlierEpochs() public {
-        vault.postRoot(2, Fixture.ROOT);
+        _postRoot(2, Fixture.ROOT);
         vm.expectRevert("stale epoch");
-        vault.postRoot(2, Fixture.ROOT);
+        _postRoot(2, Fixture.ROOT);
         vm.expectRevert("stale epoch");
-        vault.postRoot(1, Fixture.ROOT);
-        vault.postRoot(3, Fixture.ROOT);
+        _postRoot(1, Fixture.ROOT);
+        _postRoot(3, Fixture.ROOT);
         assertEq(vault.epoch(), 3);
     }
 
     function testRootMonotonicity_ZeroEpochAndZeroRootAreConsumed() public {
-        vault.postRoot(0, bytes32(0));
+        _postRoot(0, bytes32(0));
         vm.expectRevert("stale epoch");
-        vault.postRoot(0, bytes32(0));
-        vault.postRoot(1, Fixture.ROOT);
+        _postRoot(0, bytes32(0));
+        _postRoot(1, Fixture.ROOT);
     }
 
     function testChallengeWindow_RejectsOldOrMismatchedRoot() public {
         _solve();
-        bytes32 oldRoot = keccak256("old root");
-        vault.postRoot(1, oldRoot);
-        vault.postRoot(2, Fixture.ROOT);
+        bytes32 oldRoot = bytes32(0);
+        _postRoot(1, oldRoot);
+        _postRoot(2, Fixture.ROOT);
         vm.warp(vault.rootPostedAt() + vault.settleDelay());
         vm.expectRevert("bad root");
         vault.settle(1, oldRoot, Fixture.TOTAL);
@@ -572,9 +843,9 @@ contract PrizeVaultTest is Test {
 
     function testChallengeWindow_SettleDelayRestartsOnNewRoot() public {
         _solve();
-        vault.postRoot(1, Fixture.ROOT);
+        _postRoot(1, Fixture.ROOT);
         vm.warp(vault.rootPostedAt() + vault.settleDelay());
-        vault.postRoot(2, Fixture.ROOT);
+        _postRoot(2, Fixture.ROOT);
         vm.warp(vault.rootPostedAt() + vault.settleDelay() - 1);
         vm.expectRevert("too early");
         vault.settle(2, Fixture.ROOT, Fixture.TOTAL);
@@ -592,9 +863,8 @@ contract PrizeVaultTest is Test {
     function _recordWithdrawal(ClaimAccounting memory accounting, uint256 index) internal view {
         (address who,,) = _fixture(index);
         uint256 deposits = vault.cumulativeDeposits();
-        if (vault.registeredSteps(who) != 0) {
-            accounting.eligibleDeposits[index] += deposits - accounting.depositLevel[index];
-        }
+        if (vault.registeredSteps(who) == 0) return;
+        accounting.eligibleDeposits[index] += deposits - accounting.depositLevel[index];
         accounting.depositLevel[index] = deposits;
         ++accounting.withdrawals[index];
     }
@@ -659,8 +929,8 @@ contract PrizeVaultTest is Test {
             vm.prank(who);
             vault.withdraw();
             assertLe(vault.withdrawn(who), steps * vault.cumulativeDeposits() / Fixture.TOTAL);
-            // Sweeps and pre-registration withdrawals close unpaid deposits. Apply
-            // the tight rounding bound to eligible deposits, excluding those losses.
+            // Only sweeps close unpaid deposits. Pre-registration withdrawals are
+            // no-ops, so the rounding bound includes all unswept prior funding.
             uint256 share = steps * accounting.eligibleDeposits[order[i]] / Fixture.TOTAL;
             uint256 withdrawals = accounting.withdrawals[order[i]];
             assertGe(vault.withdrawn(who), share > withdrawals ? share - withdrawals : 0);

@@ -1,0 +1,9 @@
+{
+  "name": "rhonet",
+  "compatibility_date": "2026-09-01",
+  "assets": { "directory": "./docs" },
+  "routes": [
+    { "pattern": "rhonet.dev", "custom_domain": true },
+    { "pattern": "www.rhonet.dev", "custom_domain": true }
+  ]
+}

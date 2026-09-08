@@ -16,6 +16,7 @@ import os
 import queue
 import random
 import secrets
+import signal
 import sys
 import time
 
@@ -58,6 +59,15 @@ def post_with_retry(client, path, build_body, *, budget=300.0, label="request"):
             print(f"[miner] {path} {label}: retry budget exhausted after {budget:g}s",
                   file=sys.stderr)
             return response
+
+
+def retain_deferred(pending, batch, result):
+    """Capacity responses acknowledge only part of a batch; preserve original DPs."""
+    retry = set(result.get("retry_indices", []))
+    retry.update(i for i, reason in result.get("rejected", [])
+                 if reason in ("audit backlog", "quota", "rate limit"))
+    return sorted([dp for i, dp in enumerate(batch) if i in retry] + pending[len(batch):],
+                  key=lambda dp: dp["t"])
 
 
 def load_or_create_key(path: str) -> Ed25519PrivateKey:
@@ -159,7 +169,7 @@ def main(argv=None):
     print(f"[miner] admitted (epoch {r.json()['epoch']}); payout {payout}", file=sys.stderr)
 
     ctx = mp.get_context("fork")
-    q = ctx.Queue()
+    q = ctx.Queue(maxsize=max(2, args.procs * 2))
     stop = ctx.Event()
     procs = [ctx.Process(target=worker, args=(spec_dict, pk, args.batch, q, stop, args.cheat, i, args.procs, args.cheat_evasive), daemon=True) for i in range(args.procs)]
     for p in procs:
@@ -170,9 +180,16 @@ def main(argv=None):
     last_flush = time.time()
     started = time.time()
     rc = 0
+    retry_at, batch_limit = 0.0, 256
+    def shutdown(signum, frame):
+        raise KeyboardInterrupt
+    old_term = signal.signal(signal.SIGTERM, shutdown)
     try:
         while True:
             try:
+                if len(pending) >= 5000:
+                    time.sleep(0.2)
+                    raise queue.Empty
                 items, s, abandoned = q.get(timeout=0.2)
                 pending.extend(items)
                 steps_local += s
@@ -180,8 +197,9 @@ def main(argv=None):
                 abandoned_pending += abandoned
             except queue.Empty:
                 pass
-            if time.time() - last_flush >= args.flush and (pending or steps_pending or abandoned_pending):
-                batch = pending[:5000]
+            if time.time() >= retry_at and time.time() - last_flush >= args.flush and (pending or steps_pending or abandoned_pending):
+                pending.sort(key=lambda dp: dp["t"])
+                batch = pending[:batch_limit]
                 r = post_with_retry(client, "/api/submit",
                                     lambda: fresh_body(dps=batch, steps_done=steps_pending,
                                                        abandoned=abandoned_pending), label="submission")
@@ -193,8 +211,10 @@ def main(argv=None):
                     print(f"[miner] submit failed: {r.status_code} {r.text}", file=sys.stderr)
                     rc = 3
                     break
-                pending = pending[len(batch):]
                 res = r.json()
+                pending = retain_deferred(pending, batch, res)
+                retry_at = time.time() + max(0, float(res.get("retry_after", 0)))
+                batch_limit = max(1, min(5000, int(res.get("batch_limit", 256))))
                 epoch = res.get("epoch", epoch)
                 steps_pending, abandoned_pending = 0, 0
                 sent_dps += res.get("accepted", 0)
@@ -224,9 +244,12 @@ def main(argv=None):
     except KeyboardInterrupt:
         pass
     finally:
+        signal.signal(signal.SIGTERM, old_term)
         stop.set()
         for p in procs:
             p.terminate()
+        for p in procs:
+            p.join(timeout=2)
     return rc
 
 

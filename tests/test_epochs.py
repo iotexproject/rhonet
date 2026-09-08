@@ -138,22 +138,23 @@ class EpochTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), [0])
 
-    def test_backfill_audits_each_epochs_own_root(self):
+    def test_backfill_audits_previous_root_before_publishing(self):
         pk = 'ab' * 32
         self.admit(pk, self.a)
         self.work(pk)
         self.advance(3)
-        # Slash after the first published root to make subsequent roots differ.
+        # Slash during the second audit; only post-audit balances may be published.
         def audit(idx, root):
-            stored = self.coord.db.execute('SELECT root FROM epochs WHERE idx=?', (idx,)).fetchone()[0]
+            stored = self.coord.db.execute('SELECT audit_seed_root FROM epochs WHERE idx=?', (idx,)).fetchone()[0]
             self.assertEqual(root.hex(), stored)
-            if idx == 0:
+            self.assertEqual(self.coord.db.execute('SELECT root FROM epochs WHERE idx=?', (idx,)).fetchone()[0], '')
+            if idx == 1:
                 self.coord._slash(pk, 'test slash')
         with patch.object(self.coord, 'audit_epoch', side_effect=audit) as primary, \
                 patch.object(self.coord, 'audit_delayed', wraps=self.coord.audit_delayed) as delayed:
             self.coord.close_epoch()
         roots = self.coord.db.execute('SELECT idx, root FROM epochs WHERE audit_complete=1 ORDER BY idx').fetchall()
-        expected = [(idx, bytes.fromhex(root)) for idx, root in roots]
+        expected = [(idx, merkle.build([])[0] if idx == 0 else bytes.fromhex(roots[idx - 1][1])) for idx, _ in roots]
         self.assertEqual([c.args for c in primary.call_args_list], expected)
         self.assertEqual([c.args for c in delayed.call_args_list], expected)
         self.assertNotEqual(roots[0][1], roots[1][1])

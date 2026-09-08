@@ -147,7 +147,7 @@ class HardeningTests(unittest.TestCase):
             'INSERT INTO dps(pubkey,t,x,y,a,b,steps,ts,epoch) VALUES(?,?,?,?,?,?,?,?,?)',
             [(self.pk, t, '0', '0', '0', '0', 1, 0, 0) for t in range(3)])
         self.coord.db.commit()
-        with patch.object(ec, 'H', return_value=bytes(32)), \
+        with patch.object(self.spec, 'spot_check_rate', 1), patch.object(ec, 'H', return_value=bytes(32)), \
                 patch.object(ec, 'dp_verify', side_effect=lambda spec, table, pk, dp: dp['t'] != 1):
             self.coord.audit_epoch(0, b'root')
         self.assertEqual(self.coord.db.execute('SELECT t,slashed FROM dps ORDER BY t').fetchall(),

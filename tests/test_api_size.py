@@ -79,8 +79,12 @@ class EpochApiTests(unittest.TestCase):
                         break
                     offset = page['next_offset']
             self.assertEqual(entry['rate'], self.spec.spot_check_rate * (8 if tag == 'spot2' else 1))
-            ranked = sorted((int.from_bytes(ec.H(bytes.fromhex(detail['root'][2:]), bytes.fromhex(detail['beacon_reveal']), tag, pk, t), 'big'), pk, t) for pk, t in candidates)
-            selected = [(pk, t) for score, pk, t in ranked if score % entry['rate'] == 0]
+            ranked = sorted((int.from_bytes(ec.H(bytes.fromhex(detail['audit_seed_root'][2:]), bytes.fromhex(detail['beacon_reveal']), tag, pk, t), 'big'), pk, t) for pk, t in candidates)
+            count = (len(ranked) + entry['rate'] - 1) // entry['rate']
+            if tag == 'spot2' and ranked:
+                oldest = min(ranked, key=lambda r: r[2])
+                ranked = [oldest] + [r for r in ranked if r != oldest]
+            selected = [(pk, t) for _, pk, t in ranked[:count]]
             self.assertEqual(entry['total'], len(selected))
             self.assertEqual(pairs, selected[:entry['cap']])
             published.extend(pairs)
@@ -93,34 +97,34 @@ class EpochApiTests(unittest.TestCase):
         self.assertEqual(raw, json.dumps(json.loads(raw), separators=(',', ':')))
         self.assertIsInstance(json.loads(raw)['spot']['pairs'][0][0], int)
 
-    def test_truncation_and_snapshot_survives_deleted_dps(self):
+    def test_uncapped_selection_and_snapshot_survives_deleted_dps(self):
         rows = [(self.pk, t, '1', '1', '1', '1', 1) for t in range(20)]
         self.coord.db.executemany(
             'INSERT INTO dps(pubkey,t,x,y,a,b,steps,ts,epoch) VALUES(?,?,1,1,1,1,1,0,0)',
             [(self.pk, t) for t in range(20)])
         self.coord.db.commit()
         with patch.object(ec, 'dp_verify', return_value=True) as verify:
-            self.coord._audit_rows(0, bytes(32), rows, 'spot', 1, 3, 'epoch_audit')
-        self.assertEqual(verify.call_count, 3)
+            self.coord._audit_rows(0, bytes(32), rows, 'spot', 1, 'epoch_audit')
+        self.assertEqual(verify.call_count, 20)
         self.coord.db.execute('UPDATE epochs SET root=?,beacon_reveal=?,audit_complete=1 WHERE idx=0',
                               ('00' * 32, self.coord.beacon_for(0).hex()))
         self.coord.db.execute('DELETE FROM dps')
         self.coord.db.commit()
         raw = json.loads(self.coord.db.execute('SELECT audit_inputs FROM epochs WHERE idx=0').fetchone()[0])['spot']
         self.assertEqual(raw['total'], 20)
-        self.assertEqual(len(raw['pairs']), 3)
+        self.assertEqual(len(raw['pairs']), 20)
         detail = self.client.get('/api/epochs/0/audit?limit=2').json()['audit_inputs']['spot']
         self.assertEqual(detail['total'], 20)
-        self.assertEqual(detail['stored_count'], 3)
-        self.assertTrue(detail['truncated'])
+        self.assertEqual(detail['stored_count'], 20)
+        self.assertFalse(detail['truncated'])
         self.assertEqual(len(detail['pairs']), 2)
-        last = self.client.get('/api/epochs/0/audit?limit=2&offset=2').json()['audit_inputs']['spot']
-        self.assertEqual(len(last['pairs']), 1)
+        last = self.client.get('/api/epochs/0/audit?limit=2&offset=18').json()['audit_inputs']['spot']
+        self.assertEqual(len(last['pairs']), 2)
         self.assertIsNone(last['next_offset'])
         candidates = self.client.get('/api/epochs/0/audit?kind=candidates').json()['audit_inputs']['spot']
         self.assertEqual(candidates['pairs'], [[self.pk, t] for t in range(20)])
         counts = self.client.get('/api/epochs').json()[0]['audit_counts']['spot']
-        self.assertEqual(counts, {'audited': 3, 'total': 20, 'failed': 0})
+        self.assertEqual(counts, {'audited': 20, 'total': 20, 'failed': 0})
 
     def test_listing_paging_and_validation(self):
         for idx in range(1, 65):

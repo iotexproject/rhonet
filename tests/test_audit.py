@@ -83,7 +83,7 @@ class AuditTests(unittest.TestCase):
         self.close(2)  # Also exercises catching up a missed epoch zero.
         self.assertEqual(self.miner(evil)[:2], ('slashed', 0))
         self.assertEqual(self.miner(honest)[0], 'active')
-        root = bytes.fromhex(self.coord.db.execute('SELECT root FROM epochs WHERE idx=0').fetchone()[0])
+        root = bytes.fromhex(self.coord.db.execute('SELECT audit_seed_root FROM epochs WHERE idx=0').fetchone()[0])
         targets = [dp for dp in bad if int.from_bytes(ec.H(root, self.coord.beacon_for(0), 'spot', evil, dp['t']), 'big') % self.spec.spot_check_rate == 0]
         self.assertTrue(targets)
         failures = [e for e in self.coord.events_view(1000) if e['kind'] == 'audit_failed']
@@ -94,7 +94,7 @@ class AuditTests(unittest.TestCase):
         self.admit(pk, address)
         # A one-DP fixture whose root and private test beacon select the old-selector
         # evasion. No selector or replay is mocked in either attack regression.
-        root, _ = merkle.build([merkle.leaf_hash(address, 1 << self.spec.w)])
+        root, _ = merkle.build([])
         bad = None
         for t in range(T_WINDOW):
             if self.old_selector(pk, t) and int.from_bytes(ec.H(root, self.coord.beacon_for(0), 'spot', pk, t), 'big') % self.spec.spot_check_rate == 0:
@@ -120,12 +120,13 @@ class AuditTests(unittest.TestCase):
         dup = self.coord.submit(pk, [points[2]])
         self.assertEqual(dup['rejected'], [(0, 'duplicate')])
         self.coord.submit(pk, [points[3]])
-        # Retire missing t=1, but don't count accepted t=2 as a gap.
-        self.assertEqual(self.miner(pk)[2:], (3, 1))
+        # Missing identifiers remain retryable even far behind newer work.
+        self.assertEqual(self.miner(pk)[2:], (1, 0))
         old = self.coord.submit(pk, [points[1]])
-        self.assertEqual(old['rejected'], [(0, 't reused/too old')])
+        self.assertEqual(old['accepted'], 1)
+        self.assertEqual(self.miner(pk)[2:], (3, 0))
 
-    def test_excessive_gaps_slash_after_64_acceptances(self):
+    def test_gaps_are_not_evidence_of_fraud(self):
         pk = '34' * 32
         self.admit(pk, '0x' + '55' * 20)
         batch = []
@@ -147,37 +148,37 @@ class AuditTests(unittest.TestCase):
                 break
         self.assertIsNotNone(extra)
         result = self.coord.submit(pk, [dp, extra])
-        self.assertEqual(result['accepted'], 1)
-        self.assertTrue(result['slashed'])
-        self.assertEqual(self.miner(pk)[:2], ('slashed', 0))
-        self.assertEqual(self.coord.db.execute('SELECT note FROM miners WHERE pubkey=?', (pk,)).fetchone()[0], 'excessive t gaps')
+        self.assertEqual(result['accepted'], 2)
+        self.assertFalse(result.get('slashed'))
+        self.assertEqual(self.miner(pk)[:2], ('active', 65 << self.spec.w))
 
-    def test_delayed_pass_and_replay_caps(self):
+    def test_fractional_primary_and_oldest_delayed_pass(self):
         pk = '56' * 32
         self.admit(pk, '0x' + '66' * 20)
         self.coord.db.executemany(
             'INSERT INTO dps(pubkey,t,x,y,a,b,steps,ts,epoch,checked) VALUES(?,?,?,?,?,?,?,?,?,?)',
             [(pk, t, '0', '0', '0', '0', 1, 0, 0, 0) for t in range(600)])
         self.coord.db.commit()
-        # All qualify, with selectors in reverse order to test deterministic cap.
         original_hash = ec.H
         def selector(*parts):
             if len(parts) != 5 or parts[2] not in ("spot", "spot2"):
                 return original_hash(*parts)
-            root, beacon, tag, key, t = parts
-            return ((600 - t) * self.spec.spot_check_rate * 8).to_bytes(32, 'big')
+            return (600 - parts[-1]).to_bytes(32, 'big')
+        primary = (600 + self.spec.spot_check_rate - 1) // self.spec.spot_check_rate
+        remaining = 600 - primary
+        delayed = (remaining + 8 * self.spec.spot_check_rate - 1) // (8 * self.spec.spot_check_rate)
         with patch.object(ec, 'H', side_effect=selector), patch.object(ec, 'dp_verify', return_value=True) as verify:
             self.coord.audit_epoch(0, b'root')
-            self.assertEqual(verify.call_count, 512)
-            self.assertEqual([c.args[3]['t'] for c in verify.call_args_list], list(range(599, 87, -1)))
+            self.assertEqual(verify.call_count, primary)
+            self.assertEqual([c.args[3]['t'] for c in verify.call_args_list], list(range(599, 599 - primary, -1)))
             verify.reset_mock()
             self.coord.audit_delayed(0, b'root')
             verify.assert_not_called()
             self.coord.audit_delayed(1, b'new-root')
-            self.assertEqual(verify.call_count, 64)
-            self.assertEqual([c.args[3]['t'] for c in verify.call_args_list], list(range(87, 23, -1)))
-            self.assertEqual(self.coord.db.execute('SELECT COUNT(*) FROM dps WHERE checked=1').fetchone()[0], 576)
-        with patch.object(ec, 'H', side_effect=selector), patch.object(ec, 'dp_verify', return_value=False):
+            self.assertEqual(verify.call_count, delayed)
+            self.assertEqual(verify.call_args_list[0].args[3]['t'], 0)
+            self.assertEqual(self.coord.db.execute('SELECT COUNT(*) FROM dps WHERE checked=1').fetchone()[0], primary + delayed)
+        with patch.object(ec, 'dp_verify', return_value=False):
             self.coord.audit_delayed(2, b'later-root')
         self.assertEqual(self.miner(pk)[:2], ('slashed', 0))
 
@@ -192,7 +193,7 @@ class AuditTests(unittest.TestCase):
             if len(bad) == 11:
                 break
         self.assertEqual(self.coord.submit(pk, bad)['accepted'], 11)
-        with patch.object(ec, 'H', return_value=bytes(32)):
+        with patch.object(self.spec, 'spot_check_rate', 1), patch.object(ec, 'H', return_value=bytes(32)):
             self.coord.audit_epoch(0, b'root')
         events = self.coord.events_view(1000)
         for kind in ('slashed', 'audit_failed'):

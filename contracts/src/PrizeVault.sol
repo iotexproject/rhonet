@@ -15,7 +15,7 @@ interface IERC20 {
 /// @dev Epoch indices are strictly increasing, but a miner's credited steps are NOT monotone:
 /// coordinator slashing reduces them, including to zero. Only the final settled root is payable.
 /// Roots have a challenge window before settlement, allowing observers to inspect them and invoke
-/// an eligible stall, deadline, or external-solve abort. This is not an on-chain audit of leaf totals.
+/// an eligible stall, deadline, or external-solve abort. Leaf totals are verified when posting each root.
 /// Merkle leaves are sha256(addr20 || uint256 steps), nodes sha256(min || max); odd nodes are promoted.
 contract PrizeVault {
     struct Curve {
@@ -68,6 +68,8 @@ contract PrizeVault {
     bytes32 public root;
     uint64 public epoch;
     mapping(uint64 => bytes32) public rootAt;
+    mapping(uint64 => uint256) public rootLeafCountAt;
+    mapping(uint64 => uint256) public rootStepsAt;
     uint256 public rootPostedAt;
     uint256 public lastRootAt;
     uint256 public settledAt;
@@ -76,6 +78,10 @@ contract PrizeVault {
     uint256 public sweptDeposits;
     uint256 public sweptToOperator;
     uint256 public lastSweepAt;
+    uint256 public lastDepositAt;
+    uint256 public immutable externalRevealDelay;
+    mapping(address => bytes32) public externalCommitment;
+    mapping(address => uint256) public externalCommitAt;
     bool public solutionCommitted;
     bytes32 public solutionCommitment;
     uint256 public commitAt;
@@ -85,7 +91,8 @@ contract PrizeVault {
     bool private entered;
 
     event Funded(address indexed depositor, uint256 amount, uint256 cumulativeDeposits);
-    event RootPosted(uint64 indexed epoch, bytes32 root);
+    event RootPosted(uint64 indexed epoch, bytes32 root, uint256 leafCount, uint256 totalSteps);
+    event ExternalSolveCommitted(address indexed claimant, bytes32 commitment, uint256 committedAt);
     event SolutionCommitted(bytes32 commitment, uint256 commitAt);
     event CommitmentCleared();
     event SolutionRevealed(uint256 k);
@@ -96,6 +103,7 @@ contract PrizeVault {
     event Aborted(uint8 reason);
     event Refunded(address indexed depositor, uint256 amount);
     event Swept(uint256 amount, uint256 sweptDeposits);
+    event ExcessRecovered(uint256 amount);
 
     modifier onlyOperator() {
         require(msg.sender == operator, "not operator");
@@ -130,6 +138,7 @@ contract PrizeVault {
         deadline = t.deadline;
         stallWindow = t.stallWindow;
         revealDelay = t.revealDelay;
+        externalRevealDelay = uint256(t.revealDelay) + 1;
         commitExpiry = t.commitExpiry;
         settleDelay = t.settleDelay;
         claimWindow = t.claimWindow;
@@ -146,20 +155,52 @@ contract PrizeVault {
             "fee-on-transfer token not supported");
         deposits[msg.sender] += amount;
         cumulativeDeposits += amount;
+        if (amount != 0) lastDepositAt = block.timestamp;
         emit Funded(msg.sender, amount, cumulativeDeposits);
     }
 
-    function postRoot(uint64 _epoch, bytes32 _root) external onlyOperator openRound {
+    /// @notice Post a checkpoint with all leaves, in strictly increasing address order.
+    /// @dev Reconstructing the root binds its exact count and sum on chain while preserving
+    /// existing SHA-256 proofs. Unique addresses ensure no valid positive leaf is excluded
+    /// by another registration. Posting costs O(leaf count) calldata, memory and hashing.
+    function postRoot(uint64 _epoch, bytes32 _root, address[] calldata miners, uint256[] calldata steps)
+        external onlyOperator openRound
+    {
         require(_epoch > epoch || (epoch == 0 && root == bytes32(0)), "stale epoch");
         // Even a first checkpoint of (0, 0) consumes epoch zero.
         require(!hasRoot || _epoch > epoch, "stale epoch");
+        require(miners.length == steps.length, "leaf lengths");
+        bytes32[] memory nodes = new bytes32[](miners.length);
+        uint256 sum;
+        for (uint256 i; i < miners.length; ++i) {
+            require(miners[i] != address(0) && (i == 0 || miners[i] > miners[i - 1]), "leaf order");
+            nodes[i] = leaf(miners[i], steps[i]);
+            sum += steps[i]; // Checked addition rejects a sum that cannot fit uint256.
+        }
+        uint256 width = nodes.length;
+        while (width > 1) {
+            uint256 next;
+            for (uint256 i; i < width; i += 2) {
+                if (i + 1 == width) {
+                    nodes[next++] = nodes[i];
+                } else {
+                    bytes32 x = nodes[i];
+                    bytes32 y = nodes[i + 1];
+                    nodes[next++] = x < y ? sha256(abi.encodePacked(x, y)) : sha256(abi.encodePacked(y, x));
+                }
+            }
+            width = next;
+        }
+        require(_root == (nodes.length == 0 ? bytes32(0) : nodes[0]), "bad leaves");
+        rootLeafCountAt[_epoch] = miners.length;
+        rootStepsAt[_epoch] = sum;
         hasRoot = true;
         rootAt[_epoch] = _root;
         rootPostedAt = block.timestamp;
         lastRootAt = block.timestamp;
         epoch = _epoch;
         root = _root;
-        emit RootPosted(_epoch, _root);
+        emit RootPosted(_epoch, _root, miners.length, sum);
     }
 
     /// @notice Commit keccak256(abi.encode(k, salt, msg.sender)) before exposing the solution.
@@ -200,6 +241,7 @@ contract PrizeVault {
         require(solved, "not solved");
         require(_totalSteps > 0, "no work");
         require(hasRoot && _epoch == epoch && _root == rootAt[_epoch] && _root == root, "bad root");
+        require(_totalSteps == rootStepsAt[_epoch], "denominator");
         require(block.timestamp >= rootPostedAt + settleDelay, "too early");
         totalSteps = _totalSteps;
         settledAt = block.timestamp;
@@ -253,9 +295,11 @@ contract PrizeVault {
     /// because register enforces sum_i registeredSteps_i <= totalSteps. Each tranche
     /// is rounded down once, so outstanding claims against it cannot exceed it.
     /// Thus totalWithdrawn + refunded + sweptToOperator <= cumulativeDeposits exactly;
-    /// at rest, token.balanceOf(vault) == cumulativeDeposits - totalWithdrawn - refunded - sweptToOperator.
+    /// at rest, token.balanceOf(vault) >= cumulativeDeposits - totalWithdrawn - refunded - sweptToOperator.
+    /// Equality holds only without untracked direct transfers; excess is separately recoverable.
     function withdraw() public nonReentrant {
         require(settled, "not settled");
+        if (registeredSteps[msg.sender] == 0) return;
         uint256 amount = claimable(msg.sender);
         accountedDeposits[msg.sender] = cumulativeDeposits;
         withdrawn[msg.sender] += amount;
@@ -281,11 +325,25 @@ contract PrizeVault {
         emit Aborted(2);
     }
 
-    /// @notice Anyone can prove an external solve until a genuine reveal solves the round.
-    /// @dev A garbage commitment never produces solved, so this trigger survives it.
-    /// A genuine reveal closes the trigger immediately, preventing grief by replaying public k.
-    function abortOnExternalSolve(uint256 k) external openRound {
+    /// @notice Commit keccak256(abi.encode(k, salt, msg.sender)) before exposing an external solve.
+    /// @dev Independent of operator commitments, including garbage commitments.
+    function commitExternalSolve(bytes32 commitment) external openRound {
         require(!solved, "solved");
+        require(commitment != bytes32(0), "empty commitment");
+        externalCommitment[msg.sender] = commitment;
+        externalCommitAt[msg.sender] = block.timestamp;
+        emit ExternalSolveCommitted(msg.sender, commitment, block.timestamp);
+    }
+
+    /// @notice An independently committed solve can abort after a longer delay than the operator's.
+    /// @dev A copied pending reveal cannot immediately abort. Timely operator inclusion is
+    /// still required: no timestamp delay can guarantee inclusion against censorship.
+    function abortOnExternalSolve(uint256 k, bytes32 salt) external openRound {
+        require(!solved, "solved");
+        require(externalCommitment[msg.sender] != bytes32(0), "not committed");
+        require(block.timestamp >= externalCommitAt[msg.sender] + externalRevealDelay, "too early");
+        require(externalCommitment[msg.sender] == keccak256(abi.encode(k, salt, msg.sender)),
+            "bad commitment");
         require(EcMath.verifyDlog(p, a, n, gx, gy, qx, qy, k), "bad k");
         aborted = true;
         emit Aborted(3);
@@ -302,18 +360,36 @@ contract PrizeVault {
     }
 
     /// @notice Sweep the current tranche's entire residue to the operator after its claim window.
-    /// @dev Later funding remains claimable; each sweep starts a fresh window for the next sweep.
+    /// @dev Sweeps close the entire unswept batch, so even its newest deposit must
+    /// have aged a full window. New funding extends the batch's window; zero funding does not.
+    /// This conservatively gives every deposit at least its own full claim window.
     function sweep() external nonReentrant {
         require(settled, "not settled");
         require(block.timestamp >= settledAt + claimWindow, "too early");
         require(block.timestamp >= lastSweepAt + claimWindow, "too early");
+        require(block.timestamp >= lastDepositAt + claimWindow, "too early");
         require(cumulativeDeposits > sweptDeposits, "nothing to sweep");
         sweptDeposits = cumulativeDeposits;
         lastSweepAt = block.timestamp;
-        uint256 amount = token.balanceOf(address(this));
+        uint256 amount = _trackedBalance();
         sweptToOperator += amount;
         if (amount != 0) _safeTransfer(operator, amount);
         emit Swept(amount, sweptDeposits);
+    }
+
+    function _trackedBalance() internal view returns (uint256) {
+        return cumulativeDeposits - totalWithdrawn - refunded - sweptToOperator;
+    }
+
+    /// @notice Recover untracked direct transfers once the round is settled or aborted.
+    /// @dev Anyone may trigger recovery, but only the fixed operator receives the excess.
+    /// Tracked sponsor refunds and miner claims remain reserved, including late deposits.
+    function recoverExcess() external nonReentrant {
+        require(settled || aborted, "not finished");
+        uint256 amount = token.balanceOf(address(this)) - _trackedBalance();
+        require(amount != 0, "no excess");
+        _safeTransfer(operator, amount);
+        emit ExcessRecovered(amount);
     }
 
     function leaf(address miner, uint256 steps) public pure returns (bytes32) {

@@ -2,7 +2,7 @@
 
 Responsibilities, in the order a DP passes through them:
   admission  -> curve-native ticket replayed once per identity, slow-start quota
-  intake     -> signature check, format check, uniqueness, bounded sequential work identifiers
+  intake     -> signature check, format check, uniqueness, retryable work identifiers
   ledger     -> credited_steps per miner (1 credit = 2^credit_unit_log2 steps)
   collision  -> same x from two different walks -> solve k, verify k*G == Q, end round
   epochs     -> every epoch_seconds: Merkle root over (payout_addr, credited_steps), the thing
@@ -39,8 +39,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from . import ec, merkle
 
 T_WINDOW = 4096
-MAX_AUDITS_PER_EPOCH = 512
-MAX_DELAYED_AUDITS_PER_EPOCH = 64
+MAX_AUDIT_BACKLOG_DPS = 4096
 MAX_TELEMETRY_PER_SUBMISSION = 1 << 40
 
 def _env_num(name, default, cast=float):
@@ -168,6 +167,7 @@ CREATE INDEX IF NOT EXISTS dps_epoch_checked ON dps(epoch, checked);
 CREATE TABLE IF NOT EXISTS epochs (
   idx INTEGER PRIMARY KEY, ts REAL NOT NULL, root TEXT NOT NULL,
   total_steps INTEGER NOT NULL, n_miners INTEGER NOT NULL, leaves TEXT NOT NULL,
+  sealed_root TEXT, audit_seed_root TEXT,
   beacon_commitment TEXT, beacon_reveal TEXT, beacon_source TEXT, audit_inputs TEXT, audit_counts TEXT NOT NULL DEFAULT '{}',
   audit_complete INTEGER NOT NULL DEFAULT 0
 );
@@ -195,7 +195,7 @@ def migrate_schema(db):
         db.execute("ALTER TABLE miners ADD COLUMN miner_idx INTEGER")
     if columns:
         db.execute("UPDATE miners SET miner_idx=rowid WHERE miner_idx IS NULL")
-    for column, definition in (("audit_counts", "TEXT NOT NULL DEFAULT '{}'"),
+    for column, definition in (("sealed_root", "TEXT"), ("audit_seed_root", "TEXT"), ("audit_counts", "TEXT NOT NULL DEFAULT '{}'"),
                                ("beacon_commitment", "TEXT"), ("beacon_reveal", "TEXT"),
                                ("beacon_source", "TEXT"), ("audit_inputs", "TEXT"),
                                ("audit_complete", "INTEGER NOT NULL DEFAULT 1")):
@@ -234,6 +234,12 @@ class Coordinator:
         self.db.execute("PRAGMA busy_timeout=5000")
         migrate_schema(self.db)
         self.db.executescript(SCHEMA)
+        fingerprint = spec.to_dict()
+        previous_spec = self._get_state("round_spec")
+        if previous_spec is not None and previous_spec != fingerprint:
+            self.db.close()
+            raise ValueError("database belongs to a different round specification")
+        self._set_state("round_spec", fingerprint)
         self._migrate_audit_inputs()
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.commit()
@@ -250,6 +256,8 @@ class Coordinator:
             self.event("round_open", {"round_id": spec.round_id, "bits": spec.bits})
 
         self.current_epoch()  # Publish the opening commitment before intake.
+        if self.status == "settling" and self._get_state("pending_solution"):
+            self._finish(*self._get_state("pending_solution"))
 
     # ---------------------------------------------------------------- state helpers
     @db_locked
@@ -297,7 +305,8 @@ class Coordinator:
 
         The URL may contain {epoch} and {root}; it must return a 32-byte hex hash
         as plain text, a JSON string, or {"hash": "0x..."}. Production must bind
-        this to the L2 block including the root post, unknown at batch seal time.
+        this to an external event after the sealed batch commitment, unknown at seal time.
+        {root} is the sealed batch commitment, never the payment root.
         Fetch only after sealing. The fallback secret is revealed after auditing.
         """
         with self.beacon_lock:
@@ -307,14 +316,14 @@ class Coordinator:
         with self.lock:
             self._open_epoch(epoch)
             root, source, reveal = self.db.execute(
-                "SELECT root,beacon_source,beacon_reveal FROM epochs WHERE idx=?", (epoch,)).fetchone()
+                "SELECT sealed_root,beacon_source,beacon_reveal FROM epochs WHERE idx=?", (epoch,)).fetchone()
             cached = reveal or self._get_state(f"beacon_value:{epoch}")
         if cached is not None:
             return bytes.fromhex(cached)
         if source == "commit-reveal":
             return bytes.fromhex(self._get_state(f"beacon_secret:{epoch}"))
         if not root:
-            raise RuntimeError("external beacon requires a sealed epoch root")
+            raise RuntimeError("external beacon requires a sealed batch commitment")
         with urlopen(source.format(epoch=epoch, root=root), timeout=5) as response:
             raw = response.read(4097)
         if len(raw) > 4096:
@@ -468,11 +477,11 @@ class Coordinator:
                 self._accept_seq(pubkey, freshness)
                 return {"accepted": 0, "rejected": [], "status": self.status, "solved": self._get_state("solution")}
             m = self.db.execute(
-                "SELECT status, admitted_epoch, epoch_dps, epoch_dps_epoch, next_t, t_gaps, dps FROM miners WHERE pubkey=?", (pubkey,)
+                "SELECT status, admitted_epoch, epoch_dps, epoch_dps_epoch, next_t, t_gaps FROM miners WHERE pubkey=?", (pubkey,)
             ).fetchone()
             if not m:
                 raise HTTPException(403, "no ticket for this identity")
-            status, admitted_epoch, epoch_dps, epoch_dps_epoch, next_t, t_gaps, total_dps = m
+            status, admitted_epoch, epoch_dps, epoch_dps_epoch, next_t, t_gaps = m
             if status == "slashed":
                 raise HTTPException(403, "identity slashed")
             self._accept_seq(pubkey, freshness)
@@ -480,29 +489,26 @@ class Coordinator:
             if epoch_dps_epoch != ep:
                 epoch_dps, epoch_dps_epoch = 0, ep
             q = self.quota(admitted_epoch)
-            used = {r[0] for r in self.db.execute(
-                "SELECT t FROM dps WHERE pubkey=? AND t>=?", (pubkey, next_t))}
 
+            backlog = self.db.execute(
+                "SELECT COUNT(*) FROM dps WHERE pubkey=? AND checked=0 AND slashed=0", (pubkey,)).fetchone()[0]
+            paused = bool(self._get_state(f"intake_paused:{pubkey}"))
+            if paused and backlog <= MAX_AUDIT_BACKLOG_DPS // 2:
+                paused = False
             accepted, checked = 0, 0
             credited = 0
             solved = None
             slashed = halted = False
             for i, dp in validated:
                 x, y, a, b, t, steps = (dp[k] for k in ("x", "y", "a", "b", "t", "steps"))
+                # Duplicate delivery (including a lost HTTP response) is harmless.
+                if self.db.execute("SELECT 1 FROM dps WHERE pubkey=? AND t=?", (pubkey, t)).fetchone():
+                    rejected.append((i, "duplicate")); continue
+                if paused or backlog >= MAX_AUDIT_BACKLOG_DPS:
+                    paused = True
+                    rejected.append((i, "audit backlog")); continue
                 if epoch_dps >= q:
                     rejected.append((i, "quota")); continue
-                if t < next_t:
-                    rejected.append((i, "t reused/too old")); continue
-                if t in used:
-                    rejected.append((i, "duplicate")); continue
-                if t >= next_t + T_WINDOW:
-                    # Retire only missing slots; already accepted out-of-order work
-                    # must not count as gaps.
-                    floor = t - T_WINDOW + 1
-                    retired = {v for v in used if v < floor}
-                    t_gaps += floor - next_t - len(retired)
-                    used.difference_update(retired)
-                    next_t = floor
 
                 # collision check against every earlier walk that hit this x
                 prior = self.db.execute("SELECT pubkey, t, x, y, a, b, steps FROM dps WHERE x=?", (str(x),)).fetchall()
@@ -510,26 +516,18 @@ class Coordinator:
                     "INSERT INTO dps(x, y, a, b, pubkey, t, steps, ts, checked, epoch) VALUES(?,?,?,?,?,?,?,?,?,?)",
                     (str(x), str(y), str(a), str(b), pubkey, t, steps, now(), 0, ep),
                 )
-                used.add(t)
-                while next_t in used:
-                    used.remove(next_t)
+                # Never retire missing identifiers: workers finish out of order,
+                # abandon walks, and retry capacity-deferred work. The database
+                # primary key supplies deduplication without an in-memory window.
+                while self.db.execute("SELECT 1 FROM dps WHERE pubkey=? AND t=?",
+                                      (pubkey, next_t)).fetchone():
                     next_t += 1
                 accepted += 1
+                backlog += 1
                 epoch_dps += 1
                 credited += 1 << w
-                if total_dps + accepted >= 64 and t_gaps * 4 > total_dps + accepted:
-                    # Stop at the offending prefix, before later rows in this
-                    # batch could dilute the gap ratio. Persist counters below.
-                    break
                 for (ppk, pt, px, py, pa, pb, psteps) in prior:
                     other = dict(t=pt, x=px, y=py, a=pa, b=pb, steps=psteps)
-                    if (pa, pb) == (str(a), str(b)):
-                        # identical coefficients at the same x from a different PRF start cannot happen
-                        # honestly: this DP was copied from the public table
-                        self.db.execute("DELETE FROM dps WHERE pubkey=? AND t=?", (pubkey, t))
-                        self._slash(pubkey, f"copied DP (same a,b as {ppk[:16]}) t={t}")
-                        slashed = True
-                        break
                     # Collision replay stays locked to preserve atomic resolution;
                     # a successful collision is a once-per-round event.
                     # Never trust a stored row's checked flag for a collision.
@@ -551,6 +549,8 @@ class Coordinator:
                             slashed = True
                             break
                         continue
+                    self.db.executemany("UPDATE dps SET checked=1 WHERE pubkey=? AND t=?",
+                                        [(pubkey, t), (ppk, pt)])
                     result = ec.solve_collision_detail(spec, dp, other)
                     kind = result["kind"]
                     if kind == "solved":
@@ -570,7 +570,7 @@ class Coordinator:
                         break
                 if slashed:
                     # Keep a valid new row if a failed earlier row slashed this
-                    # same identity. Only failed replay/copy rows are removed.
+                    # same identity. Only failed replay rows are removed.
                     if not self.db.execute("SELECT 1 FROM dps WHERE pubkey=? AND t=?", (pubkey, t)).fetchone():
                         accepted -= 1
                         epoch_dps -= 1
@@ -590,13 +590,18 @@ class Coordinator:
                 return {"accepted": accepted, "rejected": rejected, "slashed": True}
             if halted:
                 return {"accepted": accepted, "rejected": rejected, "checked": checked, "status": self.status}
-            if total_dps + accepted >= 64 and t_gaps * 4 > total_dps + accepted:
-                self._slash(pubkey, "excessive t gaps")
-                return {"accepted": accepted, "rejected": rejected, "slashed": True}
-            out = {"accepted": accepted, "rejected": rejected, "checked": checked, "quota_left": q - epoch_dps, "epoch": ep}
+            self._set_state(f"intake_paused:{pubkey}", paused)
+            retry_indices = [i for i, reason in rejected if reason in ("audit backlog", "quota")]
+            out = {"retry_indices": retry_indices,
+                   "retry_after": min(2.0, self.spec.epoch_seconds) if retry_indices else 0,
+                   "batch_limit": 1 if paused else max(1, min(256, MAX_AUDIT_BACKLOG_DPS - backlog, q - epoch_dps)),
+                   "accepted": accepted, "rejected": rejected, "checked": checked, "quota_left": q - epoch_dps, "epoch": ep}
             if solved:
-                out["solved"] = self._finish(*solved)
-            return out
+                self._set_state("status", "settling")
+                self._set_state("pending_solution", solved)
+        if solved:
+            out["solved"] = self._finish(*solved)
+        return out
 
     def _collision_evidence(self, pubkey: str, dp: dict) -> dict:
         start = ec.derive_start(self.spec, pubkey, int(dp["t"]))
@@ -623,6 +628,19 @@ class Coordinator:
         self.event("slashed", {"pubkey": pubkey[:16], "why": why, **(detail or {})})
 
     def _finish(self, k: int, finder: str, partner: str, x: int) -> dict:
+        with self.lock:
+            if self.status == "solved":
+                return self._get_state("solution")
+            self._set_state("status", "settling")
+            self._set_state("pending_solution", [k, finder, partner, x])
+        # Never wait for the epoch lock while holding the DB lock: replay needs it.
+        self.close_epoch(final=True)
+        with self.lock:
+            return self._finalize_solution(k, finder, partner, x)
+
+    def _finalize_solution(self, k, finder, partner, x):
+        if self._audit_backlogs():
+            raise RuntimeError("settlement has unreplayed payable work")
         spec = self.spec
         total = self.db.execute("SELECT COALESCE(SUM(credited_steps),0) FROM miners WHERE status='active'").fetchone()[0]
         rows = self.db.execute("SELECT pubkey, payout_addr, credited_steps FROM miners WHERE status='active' AND credited_steps>0").fetchall()
@@ -649,27 +667,36 @@ class Coordinator:
         return sol
 
     # ---------------------------------------------------------------- epochs
-    def audit_epoch(self, idx, root_bytes):
+    def audit_epoch(self, idx, root_bytes, final=False):
         with self.lock:
             rows = self.db.execute(
-                "SELECT pubkey, t, x, y, a, b, steps FROM dps WHERE epoch=? AND checked=0",
+                "SELECT pubkey, t, x, y, a, b, steps FROM dps WHERE epoch=? AND checked=0 AND slashed=0 ORDER BY pubkey,t",
                 (idx,),
             ).fetchall()
-        self._audit_rows(idx, root_bytes, rows, "spot", self.spec.spot_check_rate,
-                         MAX_AUDITS_PER_EPOCH, "epoch_audit")
+        self._audit_rows(idx, root_bytes, rows, "spot", 1 if final else self.spec.spot_check_rate,
+                         "epoch_audit")
 
-    def audit_delayed(self, idx, root_bytes):
+    def audit_delayed(self, idx, root_bytes, final=False):
         with self.lock:
             rows = self.db.execute(
-                "SELECT pubkey, t, x, y, a, b, steps FROM dps WHERE epoch<? AND checked=0",
+                "SELECT pubkey, t, x, y, a, b, steps FROM dps WHERE epoch<? AND checked=0 AND slashed=0 ORDER BY pubkey,t",
                 (idx,),
             ).fetchall()
-        self._audit_rows(idx, root_bytes, rows, "spot2", self.spec.spot_check_rate * 8,
-                         MAX_DELAYED_AUDITS_PER_EPOCH, "delayed_audit")
+        self._audit_rows(idx, root_bytes, rows, "spot2", 1 if final else self.spec.spot_check_rate * 8,
+                         "delayed_audit")
 
-    def _audit_rows(self, idx, root_bytes, rows, tag, rate, cap, event_kind):
+    def _audit_rows(self, idx, root_bytes, rows, tag, rate, event_kind):
         beacon = self.beacon_for(idx)
-        targets = self._select_targets(root_bytes, beacon, rows, tag, rate)
+        with self.lock:
+            pressure = {pk for pk, count in self.db.execute(
+                "SELECT pubkey,COUNT(*) FROM dps WHERE checked=0 AND slashed=0 GROUP BY pubkey")
+                if count >= max(1, MAX_AUDIT_BACKLOG_DPS // 2)}
+        # Drain pressure in bounded epoch work, before intake can resume. Keep
+        # beacon ranking and per-identity selection, with a larger sampling fraction.
+        targets = self._select_targets(root_bytes, beacon,
+                                        [r for r in rows if r[0] not in pressure], tag, rate)
+        targets += self._select_targets(root_bytes, beacon,
+                                         [r for r in rows if r[0] in pressure], tag, min(rate, 2))
         with self.lock:
             inputs = json.loads(self.db.execute(
                 "SELECT audit_inputs FROM epochs WHERE idx=?", (idx,)).fetchone()[0] or "{}")
@@ -680,9 +707,11 @@ class Coordinator:
                 self.db.executemany(
                     "INSERT INTO audit_candidates VALUES(?,?,?,?,?)",
                     [(idx, tag, i, indices[r[0]], r[1]) for i, r in enumerate(rows)])
-                inputs[tag] = {"rate": rate, "cap": cap, "total": len(targets),
+                inputs[tag] = {"rate": rate, "cap": len(targets), "total": len(targets),
+                               "selection": "per-identity-fraction-v1",
+                               "pressure_identities": sorted(pressure), "pressure_rate": min(rate, 2),
                                "candidate_total": len(rows), "failed": 0,
-                               "pairs": [[indices[r[0]], r[1]] for r in targets[:cap]]}
+                               "pairs": [[indices[r[0]], r[1]] for r in targets]}
                 self._store_audit_inputs(idx, inputs)
             # Resume the persisted plan, even if checked flags changed on retry.
             targets = self.db.execute(
@@ -725,12 +754,25 @@ class Coordinator:
 
     @staticmethod
     def _select_targets(root, beacon, rows, tag, rate):
-        ranked = []
+        groups = {}
         for row in rows:
-            score = int.from_bytes(ec.H(root, beacon, tag, row[0], row[1]), "big")
-            if score % rate == 0:
-                ranked.append((score, row))
-        return [row for _, row in sorted(ranked)]
+            groups.setdefault(row[0], []).append(row)
+        targets = []
+        for pk, group in sorted(groups.items()):
+            count = (len(group) + rate - 1) // rate
+            ranked = sorted(group, key=lambda row: (ec.H(root, beacon, tag, pk, row[1]), row[1]))
+            if tag == "spot2":
+                # Reserve one slot for the oldest identifier. Other slots retain
+                # beacon ranking; pressure drainage keeps the backlog bounded.
+                oldest = min(group, key=lambda row: row[1])
+                ranked = [oldest] + [row for row in ranked if row[1] != oldest[1]]
+            targets.extend(ranked[:count])
+        return targets
+
+    @staticmethod
+    def _legacy_targets(root, beacon, rows, tag, rate):
+        ranked = [(int.from_bytes(ec.H(root, beacon, tag, row[0], row[1]), "big"), row) for row in rows]
+        return [row for score, row in sorted(ranked) if score % rate == 0]
 
     def _store_audit_inputs(self, idx, inputs):
         counts = {tag: {"audited": len(v["pairs"]), "total": v["total"],
@@ -762,7 +804,7 @@ class Coordinator:
                 rows = v["pairs"]
                 self.db.executemany("INSERT OR IGNORE INTO audit_candidates VALUES(?,?,?,?,?)",
                                     [(idx, tag, i, indices[pk], t) for i, (pk, t) in enumerate(rows)])
-                targets = self._select_targets(bytes.fromhex(root), bytes.fromhex(reveal), rows, tag, v["rate"])
+                targets = self._legacy_targets(bytes.fromhex(root), bytes.fromhex(reveal), rows, tag, v["rate"])
                 # Legacy failure totals are recorded in audit events.
                 kind = "epoch_audit" if tag == "spot" else "delayed_audit"
                 event = self.db.execute(
@@ -774,40 +816,68 @@ class Coordinator:
                          pairs=[[indices[pk], t] for pk, t in targets[:v["cap"]]])
             self._store_audit_inputs(idx, inputs)
 
-    def close_epoch(self):
+    def close_epoch(self, final=False):
         with self.epoch_lock:
+            final = final or self.status == "settling"
             with self.lock:
                 last = self.db.execute("SELECT MAX(idx) FROM epochs WHERE audit_complete=1").fetchone()[0]
+            # Freeze the final epoch index durably: a failed beacon fetch/restart
+            # must resume this seal even if wall time advances.
+            end = self.current_epoch()
+            if final:
+                end = self._get_state("settlement_epoch")
+                if end is None:
+                    end = self.current_epoch()
+                    self._set_state("settlement_epoch", end)
+                end += 1
             # Catch up every sealed batch if the timer or coordinator was paused.
-            for idx in range(0 if last is None else last + 1, self.current_epoch()):
+            for idx in range(0 if last is None else last + 1, end):
                 self._open_epoch(idx)
                 with self.lock:
-                    # Lifetime credited_steps per payout address, not an epoch delta:
-                    # stopping work does not remove a miner's cumulative balance.
-                    # Slashing is the one case that reduces a balance.
-                    rows = self.db.execute(
-                        "SELECT payout_addr, SUM(credited_steps) FROM miners WHERE status='active' AND credited_steps>0 GROUP BY payout_addr ORDER BY payout_addr"
-                    ).fetchall()
-                    leaves = [merkle.leaf_hash(addr, st) for addr, st in rows]
-                    root, _ = merkle.build(leaves)
-                    total = sum(st for _, st in rows)
-                    stored = self.db.execute("SELECT root,total_steps,n_miners FROM epochs WHERE idx=?", (idx,)).fetchone()
-                    if stored[0]:
-                        root, total, n_miners = bytes.fromhex(stored[0]), stored[1], stored[2]
-                    else:
-                        n_miners = len(rows)
-                        self.db.execute(
-                            "UPDATE epochs SET ts=?,root=?,total_steps=?,n_miners=?,leaves=? WHERE idx=?",
-                            (now(), root.hex(), total, len(rows), json.dumps([[a, s] for a, s in rows]), idx))
-                        self.db.commit()
+                    snapshot = self._get_state(f"epoch_snapshot:{idx}")
+                    if snapshot is None:
+                        # Freeze membership/address and exclude work from later, still
+                        # open epochs. This is a batch seal, NOT a payment commitment.
+                        snapshot = self.db.execute(
+                            "SELECT pubkey,payout_addr,MAX(0,credited_steps - "
+                            "(SELECT COUNT(*) FROM dps d WHERE d.pubkey=m.pubkey AND d.epoch>? AND d.slashed=0)*?) "
+                            "FROM miners m WHERE status='active' AND credited_steps>0 ORDER BY pubkey",
+                            (idx, 1 << self.spec.w)).fetchall()
+                        seal = ec.H("epoch-seal", self.spec.round_id, idx, ec.canonical(snapshot))
+                        previous = self.db.execute(
+                            "SELECT root FROM epochs WHERE idx<? AND audit_complete=1 ORDER BY idx DESC LIMIT 1",
+                            (idx,)).fetchone()
+                        # The payment root depends on the audit, so cannot seed it.
+                        # Use the previous completed root (empty Merkle root at genesis)
+                        # plus fresh post-seal entropy. The private opening commitment
+                        # still hides that entropy from miners throughout this epoch.
+                        seed_root = previous[0] if previous else merkle.build([])[0].hex()
+                        self.db.execute("UPDATE epochs SET sealed_root=?,audit_seed_root=? WHERE idx=?",
+                                        (seal.hex(), seed_root, idx))
+                        self._set_state(f"epoch_snapshot:{idx}", snapshot)
+                    seed_root = self.db.execute("SELECT audit_seed_root FROM epochs WHERE idx=?", (idx,)).fetchone()[0]
                 beacon = self.beacon_for(idx)
-                self.audit_epoch(idx, root)
-                self.audit_delayed(idx, root)
+                if final and idx == end - 1:
+                    self.audit_epoch(idx, bytes.fromhex(seed_root), final=True)
+                    self.audit_delayed(idx, bytes.fromhex(seed_root), final=True)
+                else:
+                    self.audit_epoch(idx, bytes.fromhex(seed_root))
+                    self.audit_delayed(idx, bytes.fromhex(seed_root))
                 with self.lock:
-                    self.db.execute("UPDATE epochs SET beacon_reveal=?,audit_complete=1 WHERE idx=?",
-                                    (beacon.hex(), idx))
+                    balances = dict(self.db.execute("SELECT pubkey,credited_steps FROM miners WHERE status='active'"))
+                    by_address = {}
+                    for pk, addr, st in snapshot:
+                        survived = min(st, balances.get(pk, 0))
+                        if survived > 0:
+                            by_address[addr] = by_address.get(addr, 0) + survived
+                    rows = sorted(by_address.items())
+                    root, _ = merkle.build([merkle.leaf_hash(addr, st) for addr, st in rows])
+                    total = sum(st for _, st in rows)
+                    self.db.execute(
+                        "UPDATE epochs SET ts=?,root=?,total_steps=?,n_miners=?,leaves=?,beacon_reveal=?,audit_complete=1 WHERE idx=?",
+                        (now(), root.hex(), total, len(rows), json.dumps(rows), beacon.hex(), idx))
                     self.db.commit()
-                self.event("epoch_closed", {"epoch": idx, "root": root.hex()[:16], "total_steps": total, "miners": n_miners})
+                self.event("epoch_closed", {"epoch": idx, "root": root.hex()[:16], "total_steps": total, "miners": len(rows)})
 
     @db_locked
     def epochs_for(self, payout_addr: str):
@@ -882,6 +952,11 @@ class Coordinator:
                 "total_abandoned_walks": abandoned,
                 "executed_to_credited": executed / credited if credited else None}
 
+    def _audit_backlogs(self):
+        return {pk: count * (1 << self.spec.w) for pk, count in self.db.execute(
+            "SELECT d.pubkey,COUNT(*) FROM dps d JOIN miners m ON m.pubkey=d.pubkey "
+            "WHERE d.checked=0 AND d.slashed=0 AND m.status='active' GROUP BY d.pubkey")}
+
     # ---------------------------------------------------------------- reads
     @db_locked
     def status_view(self):
@@ -899,6 +974,9 @@ class Coordinator:
         checks = self.db.execute("SELECT COALESCE(SUM(spot_checks),0) FROM miners").fetchone()[0]
         last_epoch = self.db.execute("SELECT idx, root, ts, total_steps, n_miners FROM epochs WHERE audit_complete=1 ORDER BY idx DESC LIMIT 1").fetchone()
         return {
+            "audit_backlog_steps": sum(self._audit_backlogs().values()),
+            "audit_backlog_by_identity": self._audit_backlogs(),
+            "audit_backlog_limit_steps": MAX_AUDIT_BACKLOG_DPS * (1 << spec.w),
             "epochs": self.epochs_view(),
             "round": spec.to_dict(),
             "status": self.status,
@@ -950,21 +1028,22 @@ class Coordinator:
         where, params = ("", []) if before is None else ("WHERE idx<?", [before])
         rows = self.db.execute(
             "SELECT idx,ts,root,total_steps,n_miners,beacon_commitment,beacon_reveal,"
-            f"beacon_source,audit_complete,audit_counts FROM epochs {where} ORDER BY idx DESC LIMIT ?",
+            f"beacon_source,audit_complete,audit_counts,sealed_root,audit_seed_root FROM epochs {where} ORDER BY idx DESC LIMIT ?",
             (*params, limit)).fetchall()
         # An epoch row exists from the moment the epoch opens, so that its beacon
         # commitment is published before any submission can land in it. Until the
         # batch is sealed it holds no root and is not a ledger checkpoint, so it is
         # reported as open rather than as an epoch with an empty root.
         return [{"idx": r[0], "ts": r[1], "root": ("0x" + r[2]) if r[2] else None,
-                 "sealed": bool(r[2]), "total_steps": r[3], "miners": r[4],
+                 "sealed": bool(r[10] or r[2]), "sealed_root": ("0x" + r[10]) if r[10] else None,
+                 "audit_seed_root": "0x" + (r[11] or r[2]) if (r[11] or r[2]) else None, "total_steps": r[3], "miners": r[4],
                  "beacon_commitment": r[5], "beacon_reveal": r[6], "beacon_source": r[7],
                  "audit_complete": bool(r[8]), "audit_counts": json.loads(r[9])} for r in rows]
 
     @db_locked
     def epoch_audit(self, idx, limit=50, offset=0, kind="audited"):
         row = self.db.execute(
-            "SELECT root,beacon_reveal,audit_complete,audit_inputs FROM epochs WHERE idx=?", (idx,)).fetchone()
+            "SELECT root,beacon_reveal,audit_complete,audit_inputs,audit_seed_root FROM epochs WHERE idx=?", (idx,)).fetchone()
         if row is None:
             raise HTTPException(404, "unknown epoch")
         if not row[2]:
@@ -986,10 +1065,14 @@ class Coordinator:
                     (json.dumps(v["pairs"], separators=(",", ":")), limit, offset)).fetchall()
                 total, stored = v["total"], len(v["pairs"])
             result[tag] = {"tag": tag, "rate": v["rate"], "cap": v["cap"],
+                           "selection": v.get("selection", "legacy-modulo"),
+                           "pressure_rate": v.get("pressure_rate", v["rate"]),
+                           "pressure_identities": sorted({pk for pk, _ in pairs} &
+                                                         set(v.get("pressure_identities", []))),
                            "pairs": pairs, "total": total, "stored_count": stored,
                            "truncated": stored < total, "failed": v.get("failed", 0),
                            "next_offset": offset + len(pairs) if offset + len(pairs) < stored else None}
-        return {"idx": idx, "root": "0x" + row[0], "beacon_reveal": row[1],
+        return {"idx": idx, "root": "0x" + row[0], "audit_seed_root": "0x" + (row[4] or row[0]), "beacon_reveal": row[1],
                 "kind": kind, "limit": limit, "offset": offset, "audit_inputs": result}
 
     @db_locked
@@ -1079,11 +1162,11 @@ def build_app(coord: Coordinator) -> FastAPI:
 
     def limit(req, body, ip_limiter, key_limiter):
         if not ip_limiter.allow(req.client.host if req.client else "unknown"):
-            raise HTTPException(429, "rate limited")
+            raise HTTPException(429, "rate limited", headers={"Retry-After": "1"})
         if not isinstance(body.get("pubkey"), str):
             raise HTTPException(400, "missing pubkey")
         if not key_limiter.allow(body["pubkey"].lower()):
-            raise HTTPException(429, "rate limited")
+            raise HTTPException(429, "rate limited", headers={"Retry-After": "1"})
 
     @app.post("/api/ticket")
     def ticket(req: Request, body: dict):
@@ -1124,7 +1207,10 @@ def build_app(coord: Coordinator) -> FastAPI:
 def _epoch_loop(coord: Coordinator, stop: threading.Event):
     while not stop.wait(1):
         try:
-            coord.close_epoch()
+            if coord.status == "settling" and coord._get_state("pending_solution"):
+                coord._finish(*coord._get_state("pending_solution"))
+            else:
+                coord.close_epoch()
             with coord.lock:
                 coord.epoch_loop_failures = 0
         except Exception as e:  # Keep serving, but expose persistent failure.

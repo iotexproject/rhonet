@@ -246,13 +246,17 @@ def walk_table(spec: RoundSpec):
     c = spec.curve
     table = []
     for j in range(spec.r):
-        cj = int.from_bytes(H(spec.round_id, "table-c", j), "big") % c.n
-        dj = int.from_bytes(H(spec.round_id, "table-d", j), "big") % c.n
-        if cj == 0:
-            cj = 1
-        if dj == 0:
-            dj = 1
-        R = c.add(c.mul(cj, c.G), c.mul(dj, spec.Q))
+        counter = 0
+        while True:
+            # Preserve existing finite entries byte-for-byte. Only cancellation
+            # extends the PRF domain with a deterministic retry counter.
+            suffix = () if counter == 0 else (counter,)
+            cj = int.from_bytes(H(spec.round_id, "table-c", j, *suffix), "big") % c.n or 1
+            dj = int.from_bytes(H(spec.round_id, "table-d", j, *suffix), "big") % c.n or 1
+            R = c.add(c.mul(cj, c.G), c.mul(dj, spec.Q))
+            if R is not INF:
+                break
+            counter += 1
         table.append((R[0], R[1], cj, dj))
     return table
 
@@ -412,9 +416,13 @@ class BatchWalker:
         self.abandoned = 0
 
     def _fresh(self):
-        t = self.rng_t()
-        a, b, P = derive_start(self.spec, self.pubkey, t)
-        return [P[0], P[1], a, b, t, 0]  # x, y, a, b, t, steps
+        while True:
+            t = self.rng_t()
+            a, b, P = derive_start(self.spec, self.pubkey, t)
+            # Coefficients can cancel even when both are nonzero. Skip this
+            # identifier; replay retains the same public PRF start semantics.
+            if P is not INF:
+                return [P[0], P[1], a, b, t, 0]  # x, y, a, b, t, steps
 
     def step(self):
         """One step for every walk. Returns list of DP dicts found."""

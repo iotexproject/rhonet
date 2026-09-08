@@ -1,0 +1,55 @@
+Compiling 2 files with Solc 0.8.24
+Solc 0.8.24 finished in 608.46ms
+Compiler run successful with warnings:
+Warning (2018): Function state mutability can be restricted to pure
+  --> src/EcMath.sol:19:5:
+   |
+19 |     function mulG(uint256 p, uint256 a, uint256 k, uint256 gx, uint256 gy)
+   |     ^ (Relevant source part starts here and spans across multiple lines).
+
+
+Ran 41 tests for test/PrizeVault.t.sol:PrizeVaultTest
+[PASS] testAbortOnDeadline_Stranger() (gas: 371213)
+[PASS] testAbortOnExternalSolve_GarbageCommitmentStillRefundsEveryone() (gas: 585402)
+[PASS] testAbortOnExternalSolve_RejectsAfterCommit() (gas: 281384)
+[PASS] testAbortOnExternalSolve_RejectsWrongScalar() (gas: 211581)
+[PASS] testAbortOnExternalSolve_StrangerBeforeCommit() (gas: 585098)
+[PASS] testAbortOnStall_StrangerAndLastRootResetsClock() (gas: 505104)
+[PASS] testChallengeWindow_RejectsOldOrMismatchedRoot() (gas: 574315)
+[PASS] testChallengeWindow_SettleDelayRestartsOnNewRoot() (gas: 672500)
+[PASS] testClearCommitment_RejectsMissingOrClosedCommitment() (gas: 314139)
+[PASS] testClearCommitment_RejectsSolvedRound() (gas: 285012)
+[PASS] testClearCommitment_StrangerClearsAtExpiryAndOperatorRetries() (gas: 1326469)
+[PASS] testCommitExpiry_MustExceedRevealDelay() (gas: 99558)
+[PASS] testDenominatorDouble_RejectsAtSettleAndSweepRecoversExactResidue() (gas: 1411381)
+[PASS] testDenominatorHalf_RejectsAtSettleAndAllLeavesReceiveExactShares() (gas: 1760356)
+[PASS] testEcMath_VerifyDlogRejectsWrongAndOutOfRangeScalars() (gas: 952709)
+[PASS] testExternalSolve_CommitmentIsSenderBoundAndReplacementRestartsDelay() (gas: 304701)
+[PASS] testExternalSolve_MempoolRevealCannotBeFrontRun() (gas: 1352285)
+[PASS] testFeeOnTransferToken_FundingRejectedWithoutAccountingChanges() (gas: 5522479)
+[PASS] testFuzz_Conservation(uint256,uint256,uint256,uint8) (runs: 257, μ: 2950225, ~: 2939022)
+[PASS] testFuzz_NoSweepWithdrawalRoundingBounds(uint256,uint256,uint8) (runs: 256, μ: 2597071, ~: 2295500)
+[PASS] testFuzz_SingleWithdrawalAtEndIsExact(uint256,uint256) (runs: 256, μ: 1660222, ~: 1661702)
+[PASS] testGasRevealSolution131Bit() (gas: 6545239)
+[PASS] testH2_LatePrizesAccrueUnderSameRootForExistingAndLateClaimants() (gas: 1472698)
+[PASS] testLatePrizeCannotBeSweptOnArrival() (gas: 1298714)
+[PASS] testNoReturnToken_FundAndWithdraw() (gas: 6621301)
+[PASS] testPythonRootVerifiesOnChain() (gas: 123665)
+[PASS] testRootMonotonicity_RejectsEqualAndEarlierEpochs() (gas: 341324)
+[PASS] testRootMonotonicity_ZeroEpochAndZeroRootAreConsumed() (gas: 227447)
+[PASS] testRootTotals_RejectsFalseLeavesDuplicatesAndOverflow() (gas: 316758)
+[PASS] testRootTotals_TwoEqualLeavesBothRegisterInEitherOrder() (gas: 1143669)
+[PASS] testSolutionGate_CorrectScalarAfterDelay() (gas: 279265)
+[PASS] testSolutionGate_MismatchedCommitment() (gas: 97568)
+[PASS] testSolutionGate_RevealBeforeDelay() (gas: 91147)
+[PASS] testSolutionGate_SettleWithoutReveal() (gas: 292014)
+[PASS] testSolutionGate_WrongScalarWithMatchingCommitment() (gas: 234883)
+[PASS] testSweepIsTrancheBased_LatePrizeStillClaimable() (gas: 2003154)
+[PASS] testSweepLifetimeFloorDifference_Counterexample() (gas: 1655627)
+[PASS] testSweep_LateTrancheOutstandingClaimsAreBounded() (gas: 1513024)
+[PASS] testSweep_RejectsNothingToSweep() (gas: 860713)
+[PASS] testT3_OperatorCannotTakeSponsorDepositAndStrangerEnablesRefund() (gas: 295428)
+[PASS] testWithdrawBeforeRegisterPreservesPriorDeposits() (gas: 965549)
+Suite result: ok. 41 passed; 0 failed; 0 skipped; finished in 964.72ms (2.00s CPU time)
+
+Ran 1 test suite in 972.39ms (964.72ms CPU time): 41 tests passed, 0 failed, 0 skipped (41 total tests)

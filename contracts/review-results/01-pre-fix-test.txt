@@ -1,0 +1,13 @@
+    function testExternalSolve_MempoolRevealCannotBeFrontRun() public {
+        _fundTwoDepositors();
+        _commit(R.K);
+        vm.warp(vault.commitAt() + vault.revealDelay());
+        // Attacker sees k in the pending reveal and executes first.
+        vm.prank(STRANGER);
+        vault.abortOnExternalSolve(R.K);
+        assertTrue(vault.aborted());
+        vm.expectRevert("aborted");
+        vault.revealSolution(R.K, SALT);
+        _assertAbortClosedAndRefunds();
+    }
+

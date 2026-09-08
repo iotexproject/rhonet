@@ -1,0 +1,21 @@
+    function testDenominatorHalf_RejectsLaterClaimantsBeforeOverdraw() public {
+        _fund(SPONSOR, POOL);
+        _solveAndSettle(Fixture.TOTAL / 2);
+        for (uint256 i; i < 5; ++i) {
+            (address who, uint256 steps, bytes32[] memory proof) = _fixture(i);
+            uint256 beforeBalance = tok.balanceOf(address(vault));
+            vm.prank(who);
+            if (i >= 3) vm.expectRevert("denominator");
+            vault.claim(steps, proof);
+            if (i >= 3) {
+                assertEq(tok.balanceOf(address(vault)), beforeBalance);
+                assertEq(vault.registeredSteps(who), 0);
+                assertEq(tok.balanceOf(who), 0);
+            } else {
+                assertEq(tok.balanceOf(who), steps * POOL / (Fixture.TOTAL / 2));
+            }
+            _assertConservation();
+        }
+        assertEq(vault.claimedSteps(), 42_000_000);
+    }
+

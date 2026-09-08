@@ -1,4 +1,8 @@
 """Offline C-2 regressions; run directly or with pytest."""
+import concurrent.futures
+import dataclasses
+import json
+import threading
 import sys
 import tempfile
 import unittest
@@ -78,6 +82,77 @@ class CollisionTests(unittest.TestCase):
     def poison(self):
         return dict(self.h, b=(self.h['b'] + 1) % self.spec.curve.n)
 
+    def forged_audit_point(self):
+        self.coord.spec = dataclasses.replace(self.spec, spot_check_rate=1)
+        for t in range(100):
+            result = ec.walk_to_dp(self.spec, self.coord.table,
+                                  *ec.derive_start(self.spec, self.evil, t),
+                                  self.spec.w, ec.MAX_REPLAY_STEPS(self.spec))
+            if result and result[2][0] != self.h['x']:
+                a, b, (x, y), steps = result
+                return dict(t=t, a=(a + 1) % self.spec.curve.n, b=b, x=x, y=y, steps=steps)
+        self.fail('no forged fixture')
+
+    def test_audited_forfeit_has_no_epoch_leaf_or_proof(self):
+        bad = self.forged_audit_point()
+        self.assertEqual(self.coord.submit(self.evil, [bad])['accepted'], 1)
+        self.coord.started_at -= self.spec.epoch_seconds
+        self.coord.close_epoch()
+        self.assertEqual(self.miner(self.evil), ('slashed', 0))
+        leaves = json.loads(self.coord.db.execute('SELECT leaves FROM epochs WHERE idx=0').fetchone()[0])
+        self.assertNotIn('0x' + f'{3:040x}', [a for a, _ in leaves])
+        with self.assertRaises(HTTPException) as exc:
+            self.coord.proof('0x' + f'{3:040x}', 0)
+        self.assertEqual(exc.exception.status_code, 404)
+
+    def test_collision_drains_open_epoch_backlog(self):
+        bad = self.forged_audit_point()
+        self.coord.spec = dataclasses.replace(self.spec, spot_check_rate=64)
+        self.coord.submit(self.evil, [bad])
+        self.store(self.partner, self.p)
+        self.assertEqual(self.coord.current_epoch(), 0)
+        result = self.coord.submit(self.honest, [self.h])
+        self.assertTrue(result['solved']['verified'])
+        self.assertEqual(self.miner(self.evil), ('slashed', 0))
+        self.assertNotIn(self.evil, [p['pubkey'] for p in result['solved']['payouts']])
+        self.assertEqual(self.coord.status_view()['audit_backlog_steps'], 0)
+        self.assertTrue(self.coord.epochs_view()[-1]['audit_complete'])
+
+    def test_collision_waits_for_pending_audit_before_payouts(self):
+        bad = self.forged_audit_point()
+        self.coord.submit(self.evil, [bad])
+        self.store(self.partner, self.p, checked=1)
+        self.coord.started_at -= self.spec.epoch_seconds
+        entered, release, collided = threading.Event(), threading.Event(), threading.Event()
+        original = ec.dp_verify
+        def verify(spec, table, pk, dp):
+            if pk == self.evil:
+                entered.set()
+                if not release.wait(10):
+                    raise RuntimeError('audit release timeout')
+            if pk == self.honest:
+                collided.set()
+            return original(spec, table, pk, dp)
+        with patch.object(ec, 'dp_verify', side_effect=verify), concurrent.futures.ThreadPoolExecutor(2) as pool:
+            audit = pool.submit(self.coord.close_epoch)
+            try:
+                self.assertTrue(entered.wait(5))
+                collision = pool.submit(self.coord.submit, self.honest, [self.h])
+                self.assertTrue(collided.wait(5))
+                # Old code completes the payout table while replay is paused.
+                try:
+                    collision.result(timeout=0.2)
+                except concurrent.futures.TimeoutError:
+                    pass
+            finally:
+                release.set()
+            audit.result(timeout=10)
+            solution = collision.result(timeout=10)['solved']
+        self.assertTrue(solution['verified'])
+        self.assertEqual(self.miner(self.evil), ('slashed', 0))
+        self.assertNotIn(self.evil, [p['pubkey'] for p in solution['payouts']])
+        self.assertTrue(self.coord.epochs_view()[-1]['audit_complete'])
+
     def test_T2_poisoned_stored_point_is_attributed_and_deleted(self):
         poisoned = self.poison()
         self.store(self.evil, poisoned)
@@ -126,9 +201,8 @@ class CollisionTests(unittest.TestCase):
         self.assertEqual(self.miner(self.partner)[0], 'active')
 
     def test_degenerate_collisions_are_counted_without_slashing(self):
-        # Equal canonical a,b invokes the required pre-replay copy guard. Use
-        # distinct a and stub only replay validity to isolate the zero-denominator
-        # handling; the actual solver is exercised here and separately below.
+        # Stub only replay validity to isolate zero-denominator handling;
+        # the actual solver is exercised here and separately below.
         for pk, offset in ((self.partner, 1), (self.evil, 2)):
             self.store(pk, dict(self.h, a=(self.h['a'] + offset) % self.spec.curve.n))
         with patch.object(ec, 'dp_verify', return_value=True) as verify:
@@ -182,13 +256,44 @@ class CollisionTests(unittest.TestCase):
         self.assertEqual({s['pubkey'] for s in event['segments']}, {self.honest[:16], self.evil[:16]})
         self.assertTrue(all(s['t'] == self.h['t'] for s in event['segments']))
 
-    def test_copy_guard_precedes_replay(self):
-        self.store(self.partner, self.h)
+    def test_copier_arrives_first_and_victim_keeps_credit(self):
+        self.assertFalse(ec.dp_verify(self.spec, self.coord.table, self.evil, self.h))
+        self.assertTrue(ec.dp_verify(self.spec, self.coord.table, self.honest, self.h))
+        self.assertEqual(self.coord.submit(self.evil, [self.h])['accepted'], 1)
         with patch.object(ec, 'dp_verify', wraps=ec.dp_verify) as verify:
             result = self.coord.submit(self.honest, [self.h])
-        verify.assert_not_called()
+        self.assertEqual(verify.call_count, 2)
+        self.assertEqual([c.args[2] for c in verify.call_args_list], [self.honest, self.evil])
+        self.assertEqual(result['accepted'], 1)
+        self.assertEqual(self.miner(self.evil), ('slashed', 0))
+        self.assertEqual(self.miner(self.honest), ('active', 1 << self.spec.w))
+        self.assertFalse(self.exists(self.evil, self.h['t']))
+        self.assertTrue(self.exists(self.honest, self.h['t']))
+
+    def test_copier_arrives_second_and_victim_keeps_credit(self):
+        self.store(self.honest, self.h)
+        with patch.object(ec, 'dp_verify', wraps=ec.dp_verify) as verify:
+            result = self.coord.submit(self.evil, [self.h])
+        self.assertEqual(verify.call_count, 2)
         self.assertTrue(result['slashed'])
-        self.assertIn('copied DP', self.events('slashed')[0]['why'])
+        self.assertEqual(self.miner(self.evil), ('slashed', 0))
+        self.assertEqual(self.miner(self.honest), ('active', 1 << self.spec.w))
+
+    def test_capacity_deferred_collision_survives_retry_and_restart(self):
+        self.store(self.partner, self.p)
+        with patch.object(self.coord, 'quota', return_value=0):
+            result = self.coord.submit(self.honest, [self.h])
+        self.assertEqual(result['retry_indices'], [0])
+        self.assertFalse(self.exists(self.honest, self.h['t']))
+        restarted = Coordinator(self.spec, str(Path(self.tmp.name) / 'collision.sqlite'))
+        try:
+            result = restarted.submit(self.honest, [self.h])
+            self.assertTrue(result['solved']['verified'])
+            self.assertEqual({p['pubkey'] for p in result['solved']['payouts']},
+                             {self.honest, self.partner})
+            self.assertEqual(restarted.status_view()['slashed'], 0)
+        finally:
+            restarted.db.close()
 
     def test_collision_detail_arithmetic_and_compatibility(self):
         n, p = self.spec.curve.n, self.spec.curve.p

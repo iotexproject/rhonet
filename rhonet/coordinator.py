@@ -248,6 +248,10 @@ class Coordinator:
         self.db.execute("UPDATE dps SET slashed=1 WHERE pubkey IN (SELECT pubkey FROM miners WHERE status='slashed')")
         self.db.commit()
         self.beacon_url = os.environ.get("RHONET_BEACON_URL", "")
+        self.registry_dir = os.environ.get("RHONET_REGISTRY", os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "contributors"))
+        self.registry = {}
+        self.reload_registry()
         self.rate_window = deque(maxlen=600)  # (ts, steps) for live throughput
         self.started_at = float(self._get_state("started_at") or now())
         self._set_state("started_at", self.started_at)
@@ -1017,9 +1021,23 @@ class Coordinator:
              "spot_checks": r[5], "spot_fails": r[6], "rejected": r[7], "admitted_at": r[8], "last_seen": r[9], "note": r[10],
              "executed_steps": r[11], "abandoned_walks": r[12], "ticket_steps": r[13],
              "total_executed_steps": r[11] + r[13],
-             "executed_to_credited": (r[11] + r[13]) / r[4] if r[4] else None}
+             "executed_to_credited": (r[11] + r[13]) / r[4] if r[4] else None,
+             # A key becomes a name only if its holder registered it publicly; an
+             # unregistered key is shown as a key, never as somebody's account.
+             "github": (self.registry.get(r[0]) or {}).get("github"),
+             "device": (self.registry.get(r[0]) or {}).get("device")}
             for r in rows
         ]
+
+    def reload_registry(self):
+        """Re-read the public contributor registry (pubkey -> GitHub account)."""
+        try:
+            from tools.contributor import load_registry
+            self.registry = load_registry(self.registry_dir)
+        except Exception as e:  # a broken registry must never stop a round
+            self.event("registry_error", {"err": str(e)})
+            self.registry = getattr(self, "registry", {})
+        return len(self.registry)
 
     @db_locked
     def epochs_view(self, limit=50, before=None):

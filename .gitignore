@@ -11,3 +11,5 @@ demo_run.log
 .wrangler/
 cache/
 out/
+data/
+public/epochs/*.tmp

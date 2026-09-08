@@ -1,0 +1,25 @@
+{
+  "round_id": "showcase",
+  "curve": {
+    "p": 1081927092761,
+    "a": 104402553490,
+    "b": 257961442473,
+    "n": 1081927144939,
+    "gx": 552101673198,
+    "gy": 840809814026
+  },
+  "qx": 839419712059,
+  "qy": 662742124170,
+  "bits": 40,
+  "w": 10,
+  "r": 128,
+  "ticket_d": 14,
+  "credit_unit_log2": 20,
+  "spot_check_rate": 64,
+  "epoch_seconds": 8,
+  "quota_dps_per_epoch_base": 65536,
+  "prize_pool_usdc": 10000.0,
+  "max_walk_len_log2": 13,
+  "expected_steps": 1300196.5866618739,
+  "created_at": 1788911400
+}

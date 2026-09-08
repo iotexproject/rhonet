@@ -1,0 +1,36 @@
+{
+ "audit": {
+  "spot": {
+   "candidates": [],
+   "failed": 0,
+   "pressure_identities": [],
+   "pressure_rate": 2,
+   "rate": 64,
+   "selected": [],
+   "selection": "per-identity-fraction-v1"
+  },
+  "spot2": {
+   "candidates": [],
+   "failed": 0,
+   "pressure_identities": [],
+   "pressure_rate": 2,
+   "rate": 512,
+   "selected": [],
+   "selection": "per-identity-fraction-v1"
+  }
+ },
+ "audit_seed_root": "0x638b897ae78c14c59668ef9e4e4edf5b22e7c78d2c144583d972831c37c7bd83",
+ "beacon": {
+  "commitment": "fe86f6bb44172a8c046128cdea35fb5f2085c48117cf9a59f124ad9b2ef7d42a",
+  "reveal": "2cb25ac48a2e21509cb2882bd37e608947767faba8cd91baf819f092fdad66fb",
+  "source": "commit-reveal"
+ },
+ "contributors": [],
+ "epoch": 2,
+ "index_to_pubkey": {
+  "1": "60044c8e4f123e903351a3648d89f8d77b6b20083d89efdf0d36187c95a4679f",
+  "2": "863388712b8fede43f913d22f522c2c3f5e594c13b045800141f41efa75b6ea7"
+ },
+ "root": "0x638b897ae78c14c59668ef9e4e4edf5b22e7c78d2c144583d972831c37c7bd83",
+ "round_id": "showcase"
+}

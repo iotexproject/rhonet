@@ -1,0 +1,68 @@
+name: verify
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  contributors:
+    name: contributor registry
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: pip install cryptography
+      - name: Every registration must verify
+        run: python -m tools.contributor verify contributors/*.json
+      - name: A pull request may only register its own author
+        if: github.event_name == 'pull_request'
+        env:
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          changed=$(git diff --name-only --diff-filter=ACMR "$BASE" -- contributors/ || true)
+          [ -z "$changed" ] && { echo "no registrations touched"; exit 0; }
+          for f in $changed; do
+            echo "checking $f against author $AUTHOR"
+            python -m tools.contributor verify "$f" --expect-author "$AUTHOR"
+          done
+
+  audit-trail:
+    name: published audits re-derive
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - name: Recompute every published epoch audit from public data
+        run: python tools/verify_audit.py public/epochs
+
+  tests:
+    name: unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: pip install fastapi "uvicorn[standard]" cryptography httpx
+      - name: Protocol tests
+        run: |
+          fail=0
+          for f in tests/test_*.py; do
+            echo "== $f"
+            python "$f" || fail=1
+          done
+          exit $fail
+
+  contracts:
+    name: settlement contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: foundry-rs/foundry-toolchain@v1
+      - working-directory: contracts
+        run: |
+          forge install foundry-rs/forge-std --no-git
+          forge test -vv

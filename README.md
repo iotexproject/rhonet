@@ -12,20 +12,27 @@ Site: https://rhowalkers.pages.dev (mirror: https://iotexproject.github.io/rhowa
 
 ## Why
 
-Certicom's ECCp-131 has been open since 1997 with a $20,000 prize. Bitcoin puzzle #135 holds
-13.5 BTC. Both are within reach of a few hundred consumer GPUs running for weeks, and nobody
-has organized that crowd. The reasons are not mathematical:
+Certicom's ECCp-131 has been open since 1997 with a $20,000 prize, and is plausibly within
+reach of a few hundred consumer GPUs running for weeks. Crowds have been organized for this
+kind of problem before: ECCp-109 fell in 2002 to Chris Monico's volunteer effort of 10,308
+participants across 247 teams over 549 days, ECC2K-130 was a multi-institution distributed
+rho, and kangaroo pools with share accounting run against the Bitcoin puzzles today. What
+none of them had was a way to pay strangers without trusting the organizer. The obstacles
+are not mathematical:
 
 - **Trust cliff.** Whoever coordinates sees the collision first and holds the key. Volunteers
-  have no reason to believe they will be paid.
-- **Cheating is cheap.** A distinguished point is 24 bytes; forging one costs nothing unless
-  someone replays the walk that produced it.
+  have no reason to believe they will be paid unless the prize is locked before the first step
+  and released by a rule rather than by the operator's goodwill.
+- **Cheating is cheap.** A distinguished point is a few dozen bytes; forging one costs nothing
+  unless someone replays the walk that produced it, and the replay has to be unpredictable to
+  the forger or it is simply avoided.
 - **Nobody is paid until the end.** A round can run for months. Volunteers who leave early
   have historically gotten nothing.
 
 RhoWalkers is a mining pool for cryptanalysis. It borrows what Bitcoin pools got right
-(shares, proportional payout, pull-based claims) and adds what a cryptanalytic challenge needs
-(verifiable work, deterministic replays, a prize locked in a contract before the first step).
+(shares, proportional payout, pull-based claims) and adds what a cryptanalytic challenge needs:
+permissionless admission through a curve-native ticket, sampled replay with slashing, and
+on-chain pro-rata settlement of a prize locked before the first step.
 
 ## How it works
 
@@ -61,13 +68,14 @@ The coordinator replays it once per identity; quota then doubles every epoch.
 **Cheating is caught by replay, not by proof.** A deterministic `1/N` of submitted segments
 are walked again from their PRF start. A forged segment cannot know whether it will be
 picked. One failure slashes the identity, zeroes its credits and blocks re-admission under
-that key. The colliding pair is always replayed in full before `k` is trusted.
+that key. Both sides of a candidate collision are replayed before `k` is trusted.
 
 **Settlement is pull-based.** Every epoch the coordinator posts one Merkle root of
 `(payout address, credited steps)`. After the solve it posts the final root and the total;
 each miner sends one `claim(steps, proof)` transaction. Operator gas does not scale with
-the number of miners. If the round is aborted (external solve, timeout, coordinator
-silence) the depositor is refunded and the credits stay recorded.
+the number of miners. Abort is a condition rather than a decision: an external solve, a
+deadline, or coordinator silence must be provable on chain and callable by anyone, and each
+sponsor recovers their own deposit.
 
 ## Run it
 
@@ -132,21 +140,26 @@ POST /api/submit                   {round_id, pubkey, dps:[{x,y,a,b,t,steps}], s
 2. **GPU kernel** for the 131-bit field (RCKangaroo-class throughput: ~4e10 steps/s on an RTX 5090),
    negation map, look-ahead against fruitless cycles. Week-0 gate: measure real 131-bit throughput.
 3. **ECCp-109** rerun, first closed then open, to calibrate quotas, replay rate and epoch size.
-4. **ECCp-131**: ~4.5e19 steps, ~18 days on 1,000 RTX 5090s. USDC pool in the vault plus the
-   Certicom prize claimed by a legal entity and distributed by the same root.
+4. **ECCp-131**: ~6.5e19 steps at 1.25·√n, roughly 19 days on 1,000 RTX 5090s if the extrapolated
+   rate of 4e10 steps per second per card holds. USDC pool in the vault plus the Certicom prize, which arrives weeks after the
+   answer is submitted and so must be distributable after settlement, under the same root.
 5. **v2 coordinator**: staked committee, each member running its own intake bucket, syncing
    only the replayed sample. Needed before a bearer-asset round.
-6. **Bitcoin puzzle #135** only once the collision can be resolved without any single party
-   learning `k` first (threshold computation, encrypted table snapshots), or explicitly as a
-   trusted-operator round.
+6. **A bearer-asset round** (a Bitcoin puzzle) needs two things this code does not have: a
+   Pollard kangaroo implementation, since a bounded interval is a different walk with a
+   different collision equation, and a way to resolve the collision without any single party
+   learning `k` first. Puzzle #135 was taken by a single solver on 28 July 2026; the community
+   has repointed to #140. That outcome is the argument for both requirements.
 
 ## What is deliberately not here
 
-- ZK proofs per distinguished point. Replaying a `1/N` sample is optimal by a factor of
-  10^5–10^7 over proving every step.
+- ZK proofs per distinguished point. Sampled replay is the right verifier here; proving every
+  elliptic-curve step in zero knowledge costs orders of magnitude more than the work it proves.
 - A transferable token, block rewards, halvings, governance. One round, one pool, one root.
-- A data-availability layer. The DP table is 24 bytes per point; the coordinator keeps it,
-  miners keep their own shards, daily snapshots are published.
+- A data-availability layer. A distinguished point needs only a truncated `x` plus an identity
+  and a counter, since the rest is recoverable by replay; the coordinator keeps the table,
+  miners keep their own shards, daily snapshots are published. The MVP's sqlite schema stores
+  decimal text and is far larger than that; the compact format is required before 131 bits.
 - Any claim about P-256. Solving 131 bits says nothing about 256; the gap is 2^62.
 
 ## License

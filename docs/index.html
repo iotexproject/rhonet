@@ -44,6 +44,9 @@ footer{margin-top:64px;color:var(--muted);font-size:13px;border-top:1px solid va
 footer a{color:var(--accent)}
 .cta{display:inline-block;background:var(--accent);color:#fff;text-decoration:none;padding:10px 18px;border-radius:5px;font-weight:500;margin-right:12px}
 .cta.alt{background:transparent;color:var(--accent);border:1px solid var(--accent)}
+.notice{border:1px solid var(--bad);border-left-width:3px;border-radius:5px;background:var(--panel);padding:14px 18px;margin:0 0 28px}
+.notice b{color:var(--bad)}
+.notice p{margin:6px 0 0;font-size:15px;color:var(--muted);max-width:70ch}
 @media (prefers-reduced-motion:reduce){.walk{display:none}}
 </style>
 </head>
@@ -56,30 +59,35 @@ footer a{color:var(--accent)}
 <p><a class="cta" href="https://github.com/iotexproject/rhowalkers">Read the code</a><a class="cta alt" href="https://github.com/iotexproject/rhowalkers#run-it">Run the demo</a></p>
 <canvas class="walk" id="walk" aria-hidden="true"></canvas>
 
-<h2>Why nobody has done this</h2>
+<div class="notice">
+  <b>Status: under remediation, do not run a public round.</b>
+  <p>An external security review on 8 September 2026 found four critical defects in this demonstrator, two of which we reproduced. The audit selector was predictable, so a miner that filtered its work identifiers could be paid for fabricated work and never be replayed. Stored points were never re-verified, so one participant could poison the table and consume the genuine collision in silence. The vault let the operator withdraw a sponsor's deposit at any time. Every finding, its reproduction and its fix are tracked in the open: <a href="https://github.com/iotexproject/rhowalkers/blob/main/review/2026-09-08-external-review.md">review/2026-09-08-external-review.md</a>.</p>
+</div>
+
+<h2>Why this is hard to organize</h2>
 <div class="grid">
-  <div class="card"><h3>The trust cliff</h3><p>Whoever coordinates sees the collision first and holds the key. Volunteers have no reason to believe they will be paid, so they never show up.</p></div>
-  <div class="card"><h3>Cheating is free</h3><p>A distinguished point is 24 bytes. Forging one costs nothing unless someone replays the walk that produced it, and nobody has been replaying.</p></div>
-  <div class="card"><h3>Paid only at the end</h3><p>A round can run for months. Whoever leaves early has historically gotten nothing, so the crowd thins exactly when it is needed.</p></div>
+  <div class="card"><h3>The trust cliff</h3><p>Whoever coordinates sees the collision first and holds the key. Volunteers have no reason to believe they will be paid, so the prize has to be locked before the first step.</p></div>
+  <div class="card"><h3>Cheating is free</h3><p>A distinguished point is a few dozen bytes. Forging one costs nothing unless someone replays the walk that produced it, and the replay has to be unpredictable or a forger simply avoids it.</p></div>
+  <div class="card"><h3>Paid only at the end</h3><p>A round can run for months. Whoever leaves early needs a claim on the prize that survives their departure, or the crowd thins exactly when it is needed.</p></div>
 </div>
 
 <h2 id="how">How it works</h2>
 <div class="grid">
   <div class="card"><h3>One unit of work, one credit</h3><p>A distinguished point with <span class="mono">w</span> trailing zero bits stands for <span class="mono">2<sup>w</sup></span> expected steps. One credit is <span class="mono">2<sup>30</sup></span> verified steps. No block reward, no halving, no treasury, no vote.</p></div>
-  <div class="card"><h3>Nobody issues seeds</h3><p>A walker starts at <span class="mono">PRF(round, pubkey, t)</span>. Anyone can recompute any walk from public data, so the coordinator keeps no per-miner state and an auditor can re-verify offline.</p></div>
+  <div class="card"><h3>Nobody issues seeds</h3><p>A walker starts at <span class="mono">PRF(round, pubkey, t)</span>. Anyone can recompute any walk from public data, so the coordinator issues no work and an auditor can re-verify any walk offline.</p></div>
   <div class="card"><h3>Admission is the same kernel</h3><p>A ticket is a walk until <span class="mono">x</span> has <span class="mono">d</span> trailing zero bits. Seconds on a weak device, replayed once, and no edge for botnets or ASICs over an honest GPU.</p></div>
-  <div class="card"><h3>Replay, not proof</h3><p>A deterministic 1 in N segments are walked again from their start. A forger cannot know which. One failure slashes the identity. This beats proving every step by a factor of 10<sup>5</sup>.</p></div>
+  <div class="card"><h3>Replay, not proof</h3><p>A sample of submitted segments is walked again and one failure slashes the identity. Sampling is the right verifier here: proving every step in zero knowledge costs orders of magnitude more than the work being proved.</p></div>
   <div class="card"><h3>Pull-based settlement</h3><p>Each epoch the coordinator posts one Merkle root of (address, credited steps) to a vault on an Ethereum L2. After the solve, every miner sends one <span class="mono">claim(steps, proof)</span>.</p></div>
-  <div class="card"><h3>Refund on abort</h3><p>External solve, timeout, or coordinator silence returns the pre-funded pool to its depositor. Credits stay recorded; nobody's work is silently repriced.</p></div>
+  <div class="card"><h3>Abort is a condition, not a decision</h3><p>An external solve, a deadline, or coordinator silence must be provable on chain and callable by anyone, so a stalled round returns each sponsor their own deposit rather than resting on the operator's good behaviour.</p></div>
 </div>
 
 <h2 id="demo">The MVP, end to end</h2>
-<p>Everything above runs today in Python on toy curves. A 56-bit round on one laptop: three honest miners with 3, 2 and 1 processes, one cheater submitting real-looking points with invented coefficients.</p>
+<p>Everything above runs today in Python on toy curves. A 56-bit round on one laptop: three honest miners with 3, 2 and 1 processes, one cheater submitting real-looking points with invented coefficients. One run is an anecdote, not a calibration: rho completion has a standard deviation near 52% of its mean, so anything between 20% and 250% of expectation is ordinary.</p>
 <div class="tbl"><table>
 <tr><th>Expected work</th><td class="mono">3.1e8 steps (1.25·√n)</td></tr>
 <tr><th>Solved after</th><td>74% of expected, about 100 seconds, <span class="mono">k</span> verified against the generator's secret</td></tr>
 <tr><th>Payouts</th><td class="mono">46.2% / 35.2% / 18.6%</td></tr>
-<tr><th>Cheater</th><td>slashed on the first replayed segment, credits zeroed, key blocked</td></tr>
+<tr><th>Cheater</th><td>a naive one is slashed on its first replayed segment; an adversary that filters its work identifiers evaded the audit entirely until the selector was rebuilt on post-commitment entropy</td></tr>
 <tr><th>Replays</th><td class="mono">191 of 14,060 segments (1 in 64), 0 false positives</td></tr>
 <tr><th>Ledger</th><td>7 epoch roots; proofs verify in Python and inside the Solidity vault</td></tr>
 </table></div>
@@ -91,13 +99,13 @@ open http://127.0.0.1:8642    # dashboard</pre>
 
 <h2 id="ladder">The ladder</h2>
 <div class="tbl"><table>
-<thead><tr><th>Target</th><th class="r">Steps</th><th>Prize</th><th>1,000 RTX 5090</th><th>Status</th></tr></thead>
-<tr><td>Certicom ECCp-109</td><td class="r mono">2.3e16</td><td>solved 2002</td><td>minutes</td><td>calibration rerun</td></tr>
-<tr><td>Certicom ECCp-131</td><td class="r mono">4.5e19</td><td>$20,000, open since 1997</td><td>~18 days</td><td>first public round</td></tr>
-<tr><td>Bitcoin puzzle #135</td><td class="r mono">1.8e20</td><td>13.5 BTC, bearer</td><td>~70 days</td><td>needs threshold solve</td></tr>
-<tr><td>Certicom ECCp-163</td><td class="r mono">3e24</td><td>$30,000</td><td>~13,000 years</td><td>out of reach</td></tr>
+<thead><tr><th>Target</th><th class="r">Expected steps</th><th>Prize</th><th>1,000 RTX 5090</th><th>Status</th></tr></thead>
+<tr><td>Certicom ECCp-109</td><td class="r mono">3.2e16</td><td>solved 2002 by 10,308 volunteers</td><td>~13 min</td><td>calibration rerun</td></tr>
+<tr><td>Certicom ECCp-131</td><td class="r mono">6.5e19</td><td>$20,000, open since 1997</td><td>~19 days</td><td>first public round</td></tr>
+<tr><td>Bitcoin puzzle #140</td><td class="r mono">1.7e21</td><td>14 BTC, bearer</td><td>~480 days</td><td>kangaroo, not implemented</td></tr>
+<tr><td>Certicom ECCp-163</td><td class="r mono">4.3e24</td><td>$30,000</td><td>~3,400 years</td><td>out of reach</td></tr>
 </table></div>
-<p style="margin-top:14px">Every rung is a rung of the same ladder: same walk, same tickets, same credit, same vault. Solving 131 bits says nothing about P-256; the gap is 2<sup>62</sup>. This is a way to organize a crowd, not a threat to anyone's wallet.</p>
+<p style="margin-top:14px">The Certicom rungs share one walk, one ticket, one credit and one vault. The Bitcoin puzzles do not: a bounded interval calls for Pollard kangaroo with tame and wild herds, a different start construction and a different collision equation, and no kangaroo mode exists in this code. Expected steps are 1.25·√n for the rho rows and 2·√(interval) for the kangaroo row. Rates for 1,000 GPUs assume 4·10<sup>10</sup> steps per second per card, extrapolated from published 256-bit kangaroo throughput and not yet measured on a 131-bit field. Solving 131 bits says nothing about P-256; the gap is 2<sup>62</sup>.</p>
 
 <h2>Roadmap</h2>
 <ol>
@@ -106,7 +114,7 @@ open http://127.0.0.1:8642    # dashboard</pre>
 <li>ECCp-109 rerun, closed then open, to calibrate quotas, replay rate and epoch length.</li>
 <li>ECCp-131 with a USDC pool in the vault plus the Certicom prize claimed by a legal entity and distributed through the same root.</li>
 <li>v2 coordinator: staked committee, each member running its own intake bucket.</li>
-<li>Puzzle #135 only when the collision can be resolved without any single party learning <span class="mono">k</span> first.</li>
+<li>A bearer-asset round, such as a Bitcoin puzzle, only with a kangaroo implementation and only when the collision can be resolved without any single party learning <span class="mono">k</span> first. Puzzle #135 was taken by a single solver on 28 July 2026, which is exactly the risk this rung has to answer.</li>
 </ol>
 
 <footer>MIT licensed. <a href="https://github.com/iotexproject/rhowalkers">github.com/iotexproject/rhowalkers</a></footer>

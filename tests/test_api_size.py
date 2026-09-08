@@ -141,7 +141,7 @@ class EpochApiTests(unittest.TestCase):
         self.assertEqual(self.client.get('/api/epochs/999/audit').status_code, 404)
         page = self.client.get('/').text
         self.assertIn('e.total_steps/unit', page)
-        self.assertIn('e.miners', page)
+        self.assertIn('e.contributors', page)
         self.assertNotIn('/audit', page)
 
     def test_legacy_compaction_and_stable_indices(self):

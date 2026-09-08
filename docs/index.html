@@ -60,8 +60,8 @@ footer a{color:var(--accent)}
 <canvas class="walk" id="walk" aria-hidden="true"></canvas>
 
 <div class="notice">
-  <b>Status: remediated, one operator, no public round yet.</b>
-  <p>An external security review on 8 September 2026 found four critical defects, two of which we reproduced before fixing. All four are closed, along with six high-severity findings, and a manual review of the repair turned up two more: a second audit pass that was structurally incapable of detecting anything, and an audit seed a dominant miner could predict. Every finding, its reproduction, its fix and the residual risks we chose to carry are in the open: <a href="https://github.com/iotexproject/rhonet/blob/main/review/2026-09-08-external-review.md">review/2026-09-08-external-review.md</a>.</p>
+  <b>Status: not ready for a funded round. Two exploitable defects are open.</b>
+  <p>An external review on 8 September 2026 found four critical and six high-severity defects; we fixed them and then had the repair itself reviewed adversarially. That second pass reproduced two new critical failures: an epoch's payout root is built before that epoch is audited, so a miner slashed for forgery still holds a valid proof against the published root, and anyone watching the chain can copy the operator's solution out of the mempool and cancel settlement with it. Both are being fixed. Until they are, this is a demonstrator and nothing here should hold money. Every finding, its reproduction and its fix is in the open: <a href="https://github.com/iotexproject/rhonet/blob/main/review/2026-09-08-external-review.md">review/2026-09-08-external-review.md</a>.</p>
 </div>
 
 <h2>Why this is hard to organize</h2>

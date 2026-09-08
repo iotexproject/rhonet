@@ -1,7 +1,7 @@
-"""RhoWalkers miner: Ed25519 identity -> curve-native ticket -> N worker processes
+"""RhoNet miner: Ed25519 identity -> curve-native ticket -> N worker processes
 running batched rho walks -> signed DP batches every few seconds.
 
-    python -m rhowalkers.miner --coordinator http://127.0.0.1:8642 --procs 4 --payout 0x...
+    python -m rhonet.miner --coordinator http://127.0.0.1:8642 --procs 4 --payout 0x...
 
 --cheat submits fabricated DPs (valid-looking points with made-up coefficients)
 to demonstrate that the coordinator's epoch audit catches and slashes it.
@@ -14,6 +14,7 @@ import json
 import multiprocessing as mp
 import os
 import queue
+import random
 import secrets
 import sys
 import time
@@ -25,14 +26,49 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from . import ec
 
 
+RETRYABLE = {429, 503, 502, 504}
+
+
+def post_with_retry(client, path, build_body, *, budget=300.0, label="request"):
+    """Rebuild each attempt; return the last response (None on transport exhaustion)."""
+    started = time.monotonic()
+    backoff = 0.5
+    response = None
+    while True:
+        try:
+            response = client.post(path, json=build_body())
+            if response.status_code not in RETRYABLE:
+                return response
+            reason = f"rate limited/unavailable ({response.status_code})"
+        except httpx.TransportError as exc:
+            response = None
+            reason = f"transport error ({type(exc).__name__})"
+        waited = time.monotonic() - started
+        remaining = budget - waited
+        if remaining <= 0:
+            print(f"[miner] {path} {label}: retry budget exhausted after {waited:.1f}s",
+                  file=sys.stderr)
+            return response
+        delay = min(remaining, backoff * random.uniform(0.75, 1.25))
+        print(f"[miner] {path} {reason}, retrying in {delay:.1f}s "
+              f"(waited {waited:.1f}s of {budget:g}s budget)", file=sys.stderr)
+        time.sleep(delay)
+        backoff = min(10.0, backoff * 2)
+        if time.monotonic() - started >= budget:
+            print(f"[miner] {path} {label}: retry budget exhausted after {budget:g}s",
+                  file=sys.stderr)
+            return response
+
+
 def load_or_create_key(path: str) -> Ed25519PrivateKey:
-    if os.path.exists(path):
+    key = Ed25519PrivateKey.generate()
+    try:
+        fd = os.open(path, os.O_CREAT | os.O_WRONLY | os.O_EXCL, 0o600)
+    except FileExistsError:
         with open(path, "rb") as f:
             return serialization.load_pem_private_key(f.read(), password=None)
-    key = Ed25519PrivateKey.generate()
-    with open(path, "wb") as f:
+    with os.fdopen(fd, "wb") as f:
         f.write(key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()))
-    os.chmod(path, 0o600)
     return key
 
 
@@ -47,7 +83,7 @@ def signed(key: Ed25519PrivateKey, body: dict) -> dict:
 
 
 def worker(spec_dict, pk: str, batch: int, q: mp.Queue, stop: mp.Event, cheat: bool, wid: int, nprocs: int, cheat_evasive: bool = False):
-    """One process, `batch` walks in lock-step. Ships (dps, steps) to the parent
+    """One process, `batch` walks in lock-step. Ships (dps, steps, abandoned) to the parent
     twice a second in a single message: a put per DP starves the queue feeder
     thread of the GIL and throttles the whole worker."""
     spec = ec.RoundSpec.from_dict(spec_dict)
@@ -68,8 +104,8 @@ def worker(spec_dict, pk: str, batch: int, q: mp.Queue, stop: mp.Event, cheat: b
                 dp["b"] = secrets.randbelow(spec.curve.n)
         buf.extend(found)
         if time.time() - last > 0.5:
-            q.put((buf, bw.steps_done))
-            buf, bw.steps_done = [], 0
+            q.put((buf, bw.steps_done, bw.abandoned))
+            buf, bw.steps_done, bw.abandoned = [], 0, 0
             last = time.time()
 
 
@@ -107,10 +143,19 @@ def main(argv=None):
     t0 = time.time()
     ticket = ec.ticket_solve(spec, table, pk)
     print(f"[miner] ticket minted in {time.time()-t0:.1f}s ({ticket['steps']} steps, nonce {ticket['nonce']})", file=sys.stderr)
-    r = client.post("/api/ticket", json=signed(key, {"round_id": spec.round_id, "pubkey": pk, "payout_addr": payout, "ticket": ticket}))
-    if r.status_code != 200:
-        print(f"[miner] admission refused: {r.status_code} {r.text}", file=sys.stderr)
+    # Timestamp seed avoids resetting seq to zero when reusing an identity.
+    seq = itertools.count(time.time_ns())
+    def fresh_body(**fields):
+        epoch = client.get("/api/status").json()["epoch"]
+        return signed(key, {"round_id": spec.round_id, "pubkey": pk, **fields,
+                            "epoch": epoch, "seq": next(seq)})
+
+    r = post_with_retry(client, "/api/ticket",
+                        lambda: fresh_body(payout_addr=payout, ticket=ticket), label="admission")
+    if r is None or r.status_code != 200:
+        print(f"[miner] admission unsuccessful: {r.status_code if r is not None else 'transport failure'}", file=sys.stderr)
         return 2
+    epoch = r.json()["epoch"]
     print(f"[miner] admitted (epoch {r.json()['epoch']}); payout {payout}", file=sys.stderr)
 
     ctx = mp.get_context("fork")
@@ -121,26 +166,37 @@ def main(argv=None):
         p.start()
 
     pending, steps_local, sent_dps, credited_steps = [], 0, 0, 0
+    steps_pending, abandoned_pending = 0, 0
     last_flush = time.time()
     started = time.time()
     rc = 0
     try:
         while True:
             try:
-                items, s = q.get(timeout=0.2)
+                items, s, abandoned = q.get(timeout=0.2)
                 pending.extend(items)
                 steps_local += s
+                steps_pending += s
+                abandoned_pending += abandoned
             except queue.Empty:
                 pass
-            if time.time() - last_flush >= args.flush and pending:
-                batch, pending = pending[:5000], pending[5000:]
-                body = signed(key, {"round_id": spec.round_id, "pubkey": pk, "dps": batch})
-                r = client.post("/api/submit", json=body)
+            if time.time() - last_flush >= args.flush and (pending or steps_pending or abandoned_pending):
+                batch = pending[:5000]
+                r = post_with_retry(client, "/api/submit",
+                                    lambda: fresh_body(dps=batch, steps_done=steps_pending,
+                                                       abandoned=abandoned_pending), label="submission")
+                if r is None or r.status_code in RETRYABLE:
+                    print("[miner] retaining pending work; will retry submission", file=sys.stderr)
+                    last_flush = time.time()
+                    continue
                 if r.status_code != 200:
                     print(f"[miner] submit failed: {r.status_code} {r.text}", file=sys.stderr)
                     rc = 3
                     break
+                pending = pending[len(batch):]
                 res = r.json()
+                epoch = res.get("epoch", epoch)
+                steps_pending, abandoned_pending = 0, 0
                 sent_dps += res.get("accepted", 0)
                 credited_steps += res.get("accepted", 0) << spec.w
                 el = time.time() - started
@@ -153,7 +209,7 @@ def main(argv=None):
                 if res.get("solved") or res.get("status") == "solved":
                     sol = res.get("solved")
                     if sol:
-                        print(f"[miner] ROUND SOLVED  k = {sol['k']}  (verified={sol['verified']}, total/expected = {sol['ratio']:.2f})", file=sys.stderr)
+                        print(f"[miner] ROUND SOLVED  k = {sol['k']}  (verified={sol['verified']}, credited/expected = {sol['ratio']:.2f})", file=sys.stderr)
                         me = [p for p in sol["payouts"] if p["pubkey"] == pk]
                         if me:
                             print(f"[miner] my share {me[0]['share']*100:.2f}% -> {me[0]['usdc']:.2f} USDC", file=sys.stderr)

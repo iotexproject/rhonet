@@ -14,31 +14,7 @@ import secrets
 import sys
 import time
 
-from .ec import INF, Curve
-
-
-def is_probable_prime(n: int, rounds: int = 32) -> bool:
-    if n < 2:
-        return False
-    for sp in (2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37):
-        if n % sp == 0:
-            return n == sp
-    d, s = n - 1, 0
-    while d % 2 == 0:
-        d //= 2
-        s += 1
-    for _ in range(rounds):
-        a = secrets.randbelow(n - 3) + 2
-        x = pow(a, d, n)
-        if x in (1, n - 1):
-            continue
-        for _ in range(s - 1):
-            x = x * x % n
-            if x == n - 1:
-                break
-        else:
-            return False
-    return True
+from .ec import INF, Curve, RoundSpec, is_probable_prime
 
 
 def random_prime(bits: int) -> int:
@@ -132,10 +108,14 @@ def gen(bits: int):
         n = cands[0]
         if not is_probable_prime(n):
             continue
+        if n == p or any(pow(p, d, n) == 1 for d in range(1, 21)):
+            continue
+        if abs(n - (p + 1)) > math.isqrt(4 * p):
+            continue
         c = Curve(p, a, b, n, P[0], P[1])
         # sanity: another random point also has order n
         P2 = random_point(p, a, b)
-        if c.mul(n, P2) is not INF or c.mul(n, P) is not INF:
+        if c.mul_unreduced(n, P2) is not INF or c.mul_unreduced(n, P) is not INF:
             continue
         return c
 
@@ -145,7 +125,7 @@ def main(argv=None):
     ap.add_argument("--bits", type=int, default=44)
     ap.add_argument("--round-id", default=None)
     ap.add_argument("--w", type=int, default=None, help="DP bits (default: bits//4)")
-    ap.add_argument("--r", type=int, default=32)
+    ap.add_argument("--r", type=int, default=128)
     ap.add_argument("--ticket-d", type=int, default=None, help="ticket difficulty bits (default: w+4)")
     ap.add_argument("--credit-unit-log2", type=int, default=20)
     ap.add_argument("--spot-check-rate", type=int, default=64)
@@ -155,12 +135,26 @@ def main(argv=None):
     ap.add_argument("--out", required=True)
     args = ap.parse_args(argv)
 
+    w = args.w if args.w is not None else max(6, args.bits // 4)
+    d = args.ticket_d if args.ticket_d is not None else w + 4
+    if w < 1:
+        sys.exit("--w must be >= 1")
+    if d <= w:
+        sys.exit("--ticket-d must be > --w (Sybil invariant)")
+    if args.r < 2 or args.r & (args.r - 1):
+        sys.exit("--r must be >= 2 and a power of two")
+    if w + args.r.bit_length() - 1 > args.bits:
+        sys.exit("--w + log2(--r) must be <= --bits")
+    for flag, value, minimum in (("--credit-unit-log2", args.credit_unit_log2, 0),
+                                  ("--spot-check-rate", args.spot_check_rate, 1),
+                                  ("--epoch-seconds", args.epoch_seconds, 1),
+                                  ("--quota", args.quota, 1)):
+        if value < minimum:
+            sys.exit(f"{flag} must be >= {minimum}")
     t0 = time.time()
     c = gen(args.bits)
     k = secrets.randbelow(c.n - 1) + 1
     Q = c.mul(k, c.G)
-    w = args.w if args.w is not None else max(6, args.bits // 4)
-    d = args.ticket_d if args.ticket_d is not None else w + 4
     rid = args.round_id or f"ecc-p{args.bits}-{secrets.token_hex(3)}"
     spec = {
         "round_id": rid,
@@ -176,12 +170,14 @@ def main(argv=None):
         "epoch_seconds": args.epoch_seconds,
         "quota_dps_per_epoch_base": args.quota,
         "prize_pool_usdc": args.prize,
-        "max_walk_len_log2": w + 5,
+        "max_walk_len_log2": w + 3,
         "expected_steps": 1.25 * c.n ** 0.5,
         "created_at": int(time.time()),
     }
+    RoundSpec.from_dict(spec)  # Validate before replacing an existing spec.
     with open(args.out, "w") as f:
         json.dump(spec, f, indent=2)
+    RoundSpec.load(args.out)
     secret_path = args.out.replace(".json", "") + ".secret.json"
     with open(secret_path, "w") as f:
         json.dump({"round_id": rid, "k": k}, f, indent=2)

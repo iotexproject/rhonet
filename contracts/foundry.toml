@@ -4,3 +4,6 @@ test = "test"
 out = "out"
 libs = ["lib"]
 solc = "0.8.24"
+
+[profile.default.fuzz]
+runs = 256

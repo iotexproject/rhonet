@@ -11,7 +11,7 @@ pass after it. A fix without its test does not count as done.**
 
 ## C-1 (critical) — The spot check is predictable, so the audit is fully evadable
 
-`rhowalkers/coordinator.py`, `Coordinator.submit`.
+`rhonet/coordinator.py`, `Coordinator.submit`.
 
 ```python
 do_check = int.from_bytes(ec.H(spec.round_id, "spot", pubkey, t), "big") % spec.spot_check_rate == 0
@@ -52,7 +52,7 @@ unbounded fraud.
 
 ## C-2 (critical) — Stored points are never re-verified; failed collisions are discarded in silence
 
-`rhowalkers/coordinator.py` collision branch; `rhowalkers/ec.py` `solve_collision`.
+`rhonet/coordinator.py` collision branch; `rhonet/ec.py` `solve_collision`.
 
 On a candidate collision only the *incoming* point is replayed; the prior record is used
 as data. `solve_collision` returns `None` when `k·G != Q`, and the caller treats `None`
@@ -122,7 +122,7 @@ false as implemented. Fix the code, then the sentence is true.
 
 ## C-4 (critical) — Attacker-controlled replay cost inside the global lock
 
-`rhowalkers/ec.py` `ticket_verify`; `Coordinator.admit`; `ec.dp_verify`.
+`rhonet/ec.py` `ticket_verify`; `Coordinator.admit`; `ec.dp_verify`.
 
 `ticket_verify` replays a submitter-supplied `steps` bounded only by `2^(ticket_d+3)`,
 and `admit` calls it while holding `self.lock`, an `RLock` that serialises every other
@@ -342,3 +342,74 @@ Each test must **fail** against current `main` and **pass** after the correspond
 | 9 | M-3: record format and storage engine | irrelevant at toy scale, required for 131-bit |
 | 10 | M-4, M-5, M-7, L-1 to L-5 | one hardening pass |
 | 11 | Site and README corrections | costs nothing, do immediately |
+
+---
+
+# Remediation status, 8 September 2026
+
+Every fix below was implemented by driving `codex` and then verified independently:
+the tests were run, the diffs read, and the two headline exploits re-run against the
+fixed code. Findings are marked **fixed**, **partial** or **accepted** (a known
+limitation we are choosing to carry, stated here rather than hidden).
+
+## Critical
+
+| ID | Status | What landed |
+|---|---|---|
+| C-1 | **fixed** | Audit selection moved out of the submission path into epoch close and seeded from the epoch's own Merkle root, which does not exist until every other participant's batch is sealed. `t` is no longer free: it is sequential per identity within a bounded reorder window, with gap accounting and slashing above 25% gaps. A delayed second pass re-audits already-accepted points from older epochs under a separate seed. |
+| C-2 | **fixed** | Both sides of every candidate collision are replayed unconditionally. A one-sided failure slashes that identity, deletes the poisoned row so it can no longer consume the real collision, and emits the failing segment as evidence. A verified pair that still fails `k·G = Q` halts the round for review. Degenerate collisions are counted separately and are not treated as faults. |
+| C-3 | **fixed** | The vault was rewritten. Per-depositor accounting with `refundClaim`; the unconditional operator drain is deleted; three permissionless abort triggers (deadline, stall, external solve proved by a foreign `k`); the denominator is bounded by an accumulator so shares can never exceed the pool; settlement requires an on-chain `reveal(k)` verified as `k·G = Q`. Residual risk on the denominator is stated below. |
+| C-4 | **partial** | Ticket verification no longer replays a submitter-supplied step count: it recomputes to the first ticket-difficulty point under a cap fixed by the round spec, and runs outside the global lock. Replay cost is bounded by a spec constant rather than by anything a submitter sends. Token-bucket limits per key and per IP, plus bounded concurrent verification. Not done: true checkpoint-local segment replay, which needs a checkpoint chain in the payload and an interactive challenge, and a connection-pooled database in place of one connection behind one lock. |
+
+## High
+
+| ID | Status | What landed |
+|---|---|---|
+| H-1 | **fixed** | The branch index reads bits disjoint from the distinguished-point predicate. Measured over 2,000 points: all 128 branches are taken, against exactly one branch under the old rule. Default `r` raised from 32 to 128. |
+| H-2 | **fixed** | Shares are fixed at settlement, deposits are unbounded in time, and each claimant withdraws its pro-rata share of cumulative deposits minus what it has already taken. Tested with two prizes five weeks apart and with a claimant registering after both. |
+| H-3 | **fixed** | Executed steps, abandoned walks and ticket cost are reported as telemetry and published separately from credited steps, with their ratio. Credit remains proportional to verified points for payment, which is the correct incentive, but is no longer presented as a measurement of work. |
+| H-4 | **fixed** | Every round-spec invariant is asserted and a round that violates one cannot start. |
+| H-5 | **fixed** | Missed epochs are backfilled, including empty ones; proofs are served for any closed epoch; leaves carry cumulative lifetime balances so one recent proof covers all prior work. |
+| H-6 | **fixed** | Replaced the single run with a calibration over hundreds of independent solves at four bit sizes; the measured constant and its interval are published in place of the anecdote. |
+
+## Medium and low
+
+M-1, M-2, M-5, M-6, M-7, L-1 to L-5 are fixed. **M-3 is accepted for now**: the schema
+still stores decimal text, which is far larger than the compact record the design needs.
+This is irrelevant at toy scale and mandatory before 131 bits; the site no longer claims
+the compact size as a present fact. **M-4 is accepted**: signing is still canonical JSON,
+which is an interoperability hazard for the polyglot clients we want; signing test vectors
+and a binary encoding are follow-ups.
+
+## Residual risk a sponsor should read before funding a round
+
+1. **The operator still chooses the settlement denominator.** An inflated total can no
+   longer overdraw or lock funds, but it under-pays every miner pro rata and routes the
+   difference to the operator when the claim window closes. The accumulator bounds the
+   damage to under-payment rather than loss; it does not make the denominator honest.
+   Publishing the settled leaf set with a challenge window is the real fix.
+2. **Curve parameters are not fully validated on chain.** The contract checks that the
+   generator and the target lie on the curve, not that the modulus and the group order are
+   prime or that the generator has that order. A malicious deployer could choose parameters
+   under which a bogus scalar satisfies the check. Verify constructor arguments off-chain
+   before funding.
+3. **The challenge window has no challenge.** Nothing on chain can reject a wrong but
+   timely root; observers can only abort on deadline, stall or external solve.
+4. **The deadline is immutable and registration is one-shot.** A round that legitimately
+   overruns can be aborted by any passer-by, and a miner who never registers before the
+   claim window closes loses its share.
+5. **Verification is bounded but not segment-local**, and the coordinator is still a single
+   party with a single database connection. The v2 staked committee is unbuilt.
+
+## Follow-ups, in priority order
+
+1. Publish the settled leaf set with a challenge window, so the denominator is verifiable
+   rather than merely bounded.
+2. Checkpoint-chained segment replay, which makes audit cost independent of walk length.
+3. Compact distinguished-point records and a key-value store, required before 131 bits.
+4. Binary canonical signing with published test vectors.
+5. Use the modexp precompile for the on-chain inversion; the current Solidity
+   square-and-multiply makes `reveal(k)` about 490,000 gas on a 131-bit curve, which is
+   affordable once per round but not optimal.
+6. Connection pooling and short transactions in the coordinator.
+7. A kangaroo walk, without which no bounded-interval target is reachable.

@@ -32,6 +32,7 @@ contract PrizeVault {
         uint64 deadline;
         uint64 stallWindow;
         uint64 revealDelay;
+        uint64 commitExpiry;
         uint64 settleDelay;
         uint64 claimWindow;
     }
@@ -50,6 +51,7 @@ contract PrizeVault {
     uint64 public immutable deadline;
     uint64 public immutable stallWindow;
     uint64 public immutable revealDelay;
+    uint64 public immutable commitExpiry;
     uint64 public immutable settleDelay;
     uint64 public immutable claimWindow;
 
@@ -61,6 +63,7 @@ contract PrizeVault {
     mapping(address => uint256) public registeredSteps;
     mapping(address => uint256) public withdrawn;
     uint256 public totalWithdrawn;
+    mapping(address => uint256) public accountedDeposits; // Deposits level already settled for this claimant.
 
     bytes32 public root;
     uint64 public epoch;
@@ -70,7 +73,9 @@ contract PrizeVault {
     uint256 public settledAt;
     bool public settled;
     bool public aborted;
-    bool public swept;
+    uint256 public sweptDeposits;
+    uint256 public sweptToOperator;
+    uint256 public lastSweepAt;
     bool public solutionCommitted;
     bytes32 public solutionCommitment;
     uint256 public commitAt;
@@ -82,6 +87,7 @@ contract PrizeVault {
     event Funded(address indexed depositor, uint256 amount, uint256 cumulativeDeposits);
     event RootPosted(uint64 indexed epoch, bytes32 root);
     event SolutionCommitted(bytes32 commitment, uint256 commitAt);
+    event CommitmentCleared();
     event SolutionRevealed(uint256 k);
     event Settled(uint64 indexed epoch, bytes32 root, uint256 totalSteps);
     event Registered(address indexed miner, uint256 steps);
@@ -89,7 +95,7 @@ contract PrizeVault {
     /// @dev Reasons: 1 = deadline, 2 = stall, 3 = external solve.
     event Aborted(uint8 reason);
     event Refunded(address indexed depositor, uint256 amount);
-    event Swept(uint256 amount);
+    event Swept(uint256 amount, uint256 sweptDeposits);
 
     modifier onlyOperator() {
         require(msg.sender == operator, "not operator");
@@ -115,6 +121,7 @@ contract PrizeVault {
         require(EcMath.isOnCurve(c.p, c.a, c.b, c.gx, c.gy), "bad G");
         require(EcMath.isOnCurve(c.p, c.a, c.b, c.qx, c.qy), "bad Q");
         require(t.deadline > block.timestamp, "bad deadline");
+        require(t.commitExpiry > t.revealDelay, "bad commit expiry");
         token = _token;
         roundId = _roundId;
         operator = msg.sender;
@@ -123,15 +130,15 @@ contract PrizeVault {
         deadline = t.deadline;
         stallWindow = t.stallWindow;
         revealDelay = t.revealDelay;
+        commitExpiry = t.commitExpiry;
         settleDelay = t.settleDelay;
         claimWindow = t.claimWindow;
         lastRootAt = block.timestamp;
     }
 
-    /// @notice Deposits accrue to fixed shares even after settlement. Funding stops after a sweep.
+    /// @notice Deposits accrue to fixed shares even after settlement and earlier sweeps.
     function fund(uint256 amount) external nonReentrant {
         require(!aborted, "aborted");
-        require(!swept, "swept");
         uint256 beforeBalance = token.balanceOf(address(this));
         _safeTransferFrom(msg.sender, amount);
         uint256 afterBalance = token.balanceOf(address(this));
@@ -164,6 +171,17 @@ contract PrizeVault {
         emit SolutionCommitted(commitment, commitAt);
     }
 
+    /// @notice Anyone may clear an expired, unrevealed commitment so the operator can retry.
+    function clearCommitment() external openRound {
+        require(solutionCommitted, "not committed");
+        require(!solved, "solved");
+        require(block.timestamp >= commitAt + commitExpiry, "too early");
+        solutionCommitted = false;
+        solutionCommitment = bytes32(0);
+        commitAt = 0;
+        emit CommitmentCleared();
+    }
+
     /// @notice The operator should secure any external prize before broadcasting this reveal.
     /// @dev The delay enforces ordering; this vault cannot verify an external prize was secured.
     function revealSolution(uint256 k, bytes32 salt) external onlyOperator {
@@ -191,7 +209,6 @@ contract PrizeVault {
 
     function register(uint256 steps, bytes32[] calldata proof) public {
         require(settled, "not settled");
-        require(!swept, "swept");
         require(registeredSteps[msg.sender] == 0, "registered");
         require(steps > 0, "no work");
         require(verify(root, leaf(msg.sender, steps), proof), "bad proof");
@@ -201,23 +218,46 @@ contract PrizeVault {
         emit Registered(msg.sender, steps);
     }
 
+    /// @notice Lifetime share if never swept and withdrawn in a single call.
+    /// @dev This is not a promise about the sum of multiple claimable amounts.
     function entitlement(address who) public view returns (uint256) {
         if (totalSteps == 0) return 0;
         return _mulDiv(registeredSteps[who], cumulativeDeposits, totalSteps);
     }
 
-    function claimable(address who) public view returns (uint256) {
-        if (swept) return 0;
-        uint256 due = entitlement(who);
-        return due > withdrawn[who] ? due - withdrawn[who] : 0;
+    function swept() public view returns (bool) {
+        return sweptDeposits > 0;
     }
 
-    /// @dev sum(registeredSteps) <= totalSteps. Each lifetime entitlement is the floor of
-    /// steps * cumulativeDeposits / totalSteps, so totalWithdrawn <= cumulativeDeposits.
+    function _watermark(address who) internal view returns (uint256) {
+        uint256 w = accountedDeposits[who];
+        return w > sweptDeposits ? w : sweptDeposits;
+    }
+
+    // Never subtract lifetime floors: floor(s*C/T) - floor(s*S/T) can exceed
+    // floor(s*(C-S)/T) by 1. With m claimants, a late tranche can be overallocated
+    // by up to m wei. Round each claimant's tranche down independently instead.
+    function claimable(address who) public view returns (uint256) {
+        if (totalSteps == 0) return 0;
+        uint256 w = _watermark(who);
+        if (cumulativeDeposits <= w) return 0;
+        return _mulDiv(registeredSteps[who], cumulativeDeposits - w, totalSteps);
+    }
+
+    /// @notice Withdraw the current tranche's share, closing it even if its floor is zero.
+    /// @dev Each extra withdrawal can lose up to 1 wei relative to one withdrawal at
+    /// the end: each tranche is rounded strictly downward and can never over-pay.
+    /// The residue is recovered by sweep, so nothing is locked (L-1).
+    /// Invariant: for any tranche D = cumulativeDeposits - w,
+    /// sum_i floor(steps_i * D / totalSteps) <= D * (sum_i steps_i) / totalSteps <= D,
+    /// because register enforces sum_i registeredSteps_i <= totalSteps. Each tranche
+    /// is rounded down once, so outstanding claims against it cannot exceed it.
+    /// Thus totalWithdrawn + refunded + sweptToOperator <= cumulativeDeposits exactly;
+    /// at rest, token.balanceOf(vault) == cumulativeDeposits - totalWithdrawn - refunded - sweptToOperator.
     function withdraw() public nonReentrant {
-        require(!swept, "swept");
         require(settled, "not settled");
         uint256 amount = claimable(msg.sender);
+        accountedDeposits[msg.sender] = cumulativeDeposits;
         withdrawn[msg.sender] += amount;
         totalWithdrawn += amount;
         if (amount != 0) _safeTransfer(msg.sender, amount);
@@ -241,8 +281,11 @@ contract PrizeVault {
         emit Aborted(2);
     }
 
+    /// @notice Anyone can prove an external solve until a genuine reveal solves the round.
+    /// @dev A garbage commitment never produces solved, so this trigger survives it.
+    /// A genuine reveal closes the trigger immediately, preventing grief by replaying public k.
     function abortOnExternalSolve(uint256 k) external openRound {
-        require(!solutionCommitted, "already committed");
+        require(!solved, "solved");
         require(EcMath.verifyDlog(p, a, n, gx, gy, qx, qy, k), "bad k");
         aborted = true;
         emit Aborted(3);
@@ -258,16 +301,19 @@ contract PrizeVault {
         emit Refunded(msg.sender, d);
     }
 
-    /// @notice Ends distribution, including future deposits, after the configured claim window.
-    /// @dev The window starts at settlement, not at the latest deposit. Late deposits do not extend it.
+    /// @notice Sweep the current tranche's entire residue to the operator after its claim window.
+    /// @dev Later funding remains claimable; each sweep starts a fresh window for the next sweep.
     function sweep() external nonReentrant {
         require(settled, "not settled");
-        require(!swept, "swept");
         require(block.timestamp >= settledAt + claimWindow, "too early");
-        swept = true;
+        require(block.timestamp >= lastSweepAt + claimWindow, "too early");
+        require(cumulativeDeposits > sweptDeposits, "nothing to sweep");
+        sweptDeposits = cumulativeDeposits;
+        lastSweepAt = block.timestamp;
         uint256 amount = token.balanceOf(address(this));
+        sweptToOperator += amount;
         if (amount != 0) _safeTransfer(operator, amount);
-        emit Swept(amount);
+        emit Swept(amount, sweptDeposits);
     }
 
     function leaf(address miner, uint256 steps) public pure returns (bytes32) {

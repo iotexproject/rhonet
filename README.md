@@ -1,12 +1,12 @@
-# RhoWalkers
+# RhoNet
 
 **A crowd of Pollard rho walkers solving public elliptic-curve challenges together.**
 
-A walker is one Pollard rho path on a curve. RhoWalkers is a crowd of them: anyone with a
+A walker is one Pollard rho path on a curve. RhoNet is a crowd of them: anyone with a
 GPU points it at a round, wanders the curve, and when any two walkers collide the whole crowd
 is paid pro rata for the work it actually did.
 
-Site: https://rhowalkers.pages.dev (mirror: https://iotexproject.github.io/rhowalkers) · Status: **MVP, protocol runs end to end on toy curves**
+Site: https://rhonet.pages.dev (mirror: https://iotexproject.github.io/rhonet) · Status: **MVP, protocol runs end to end on toy curves**
 
 ---
 
@@ -29,7 +29,7 @@ are not mathematical:
 - **Nobody is paid until the end.** A round can run for months. Volunteers who leave early
   have historically gotten nothing.
 
-RhoWalkers is a mining pool for cryptanalysis. It borrows what Bitcoin pools got right
+RhoNet is a mining pool for cryptanalysis. It borrows what Bitcoin pools got right
 (shares, proportional payout, pull-based claims) and adds what a cryptanalytic challenge needs:
 permissionless admission through a curve-native ticket, sampled replay with slashing, and
 on-chain pro-rata settlement of a prize locked before the first step.
@@ -65,10 +65,13 @@ and an auditor can re-verify any segment offline.
 weak device a few seconds and gives a botnet or an ASIC no advantage over an honest GPU.
 The coordinator replays it once per identity; quota then doubles every epoch.
 
-**Cheating is caught by replay, not by proof.** A deterministic `1/N` of submitted segments
-are walked again from their PRF start. A forged segment cannot know whether it will be
-picked. One failure slashes the identity, zeroes its credits and blocks re-admission under
-that key. Both sides of a candidate collision are replayed before `k` is trusted.
+**Cheating is caught by replay, not by proof.** A sample of submitted segments is walked
+again from its PRF start. Selection happens after the batch is sealed, seeded by the epoch's
+Merkle root mixed with a beacon the miner cannot compute in advance, so a forger cannot know
+what will be picked; work identifiers are sequential per identity, so it cannot choose them
+either. A second pass re-audits older points the first pass never chose. One failure slashes
+the identity, zeroes its credits and blocks re-admission under that key. Both sides of a
+candidate collision are replayed before `k` is trusted.
 
 **Settlement is pull-based.** Every epoch the coordinator posts one Merkle root of
 `(payout address, credited steps)`. After the solve it posts the final root and the total;
@@ -88,33 +91,45 @@ open http://127.0.0.1:8642    # dashboard
 By hand:
 
 ```bash
-python -m rhowalkers.gencurve --bits 56 --out rounds/r56.json     # prime-order curve + secret k (toy only)
-python -m rhowalkers.coordinator --round rounds/r56.json          # http://127.0.0.1:8642
-python -m rhowalkers.miner --procs 4 --payout 0x<your address>    # ticket, walk, submit
-python -m rhowalkers.miner --cheat                                # watch it get slashed
+python -m rhonet.gencurve --bits 56 --out rounds/r56.json     # prime-order curve + secret k (toy only)
+python -m rhonet.coordinator --round rounds/r56.json          # http://127.0.0.1:8642
+python -m rhonet.miner --procs 4 --payout 0x<your address>    # ticket, walk, submit
+python -m rhonet.miner --cheat                                # watch it get slashed
 python tests/test_ec.py                                           # offline math
 cd contracts && forge install foundry-rs/forge-std --no-git && forge test
 ```
 
-What a demo run looks like (56-bit curve, one laptop):
+What a demo run looks like (56-bit curve, one laptop, three honest miners and two adversaries):
 
 | | |
 |---|---|
-| Expected work | 3.1e8 steps (1.25·√n, no negation map) |
-| Solved after | 74% of expected, ~100 s, k verified against the generator's secret |
-| Miners | 3 honest (3/2/1 processes) paid 46% / 35% / 19%; 1 cheater slashed on its first replayed segment |
-| Replays | 1 in 64 segments; 191 replays, 0 false positives |
-| Ledger | 7 epoch roots; Merkle proofs verify in Python and in the Solidity vault |
+| Honest miners | paid 47.8% / 35.4% / 16.8%, matching their process counts |
+| Adversaries | a naive forger and one that filters its work identifiers to dodge the audit; both slashed |
+| Solution | `k` verified against the generator's secret on every run |
+| Ledger | epoch roots with published beacon commitments and reveals; proofs verify in Python and on chain |
+
+A single run proves very little: rho completion has a standard deviation near half its mean.
+The calibration below is 300 independent solves at each size, each checked against the secret.
+
+| Bits | Solves | Mean, in units of √n | 3σ interval of the mean | 10th–90th percentile |
+|---|---|---|---|---|
+| 28 | 300 | 1.186 | 1.084 – 1.287 | 0.50 – 2.00 |
+| 32 | 300 | 1.227 | 1.114 – 1.339 | 0.50 – 2.09 |
+| 36 | 300 | 1.241 | 1.122 – 1.360 | 0.51 – 2.10 |
+| 40 | 300 | 1.182 | 1.077 – 1.287 | 0.49 – 2.02 |
+
+Theory puts the constant at 1.25 for an r-adding walk without the negation map. The fitted
+scaling exponent is `0.5000` with `R² = 0.9998`.
 
 ## Layout
 
 ```
-rhowalkers/ec.py           curve arithmetic, r-adding walks, batched inversion, PRF starts, tickets, replay, collision solve
-rhowalkers/merkle.py       sha256 Merkle tree, byte-identical to PrizeVault.sol
-rhowalkers/gencurve.py     random prime-order curves by BSGS point counting (toy sizes)
-rhowalkers/coordinator.py  FastAPI + sqlite: admission, intake, replays, ledger, epochs, API, dashboard
-rhowalkers/miner.py        identity, ticket, worker processes, signed batches, --cheat
-rhowalkers/static/         dashboard (single file, no build)
+rhonet/ec.py           curve arithmetic, r-adding walks, batched inversion, PRF starts, tickets, replay, collision solve
+rhonet/merkle.py       sha256 Merkle tree, byte-identical to PrizeVault.sol
+rhonet/gencurve.py     random prime-order curves by BSGS point counting (toy sizes)
+rhonet/coordinator.py  FastAPI + sqlite: admission, intake, replays, ledger, epochs, API, dashboard
+rhonet/miner.py        identity, ticket, worker processes, signed batches, --cheat
+rhonet/static/         dashboard (single file, no build)
 contracts/                 PrizeVault.sol + forge tests against a Python-generated fixture
 docs/                      project site (GitHub Pages)
 tests/test_ec.py           offline checks

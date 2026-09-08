@@ -1,4 +1,4 @@
-<title>RhoWalkers Coordinator</title>
+<title>RhoNet Coordinator</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>
@@ -27,6 +27,7 @@ header .sub{color:var(--muted)}
 .pill{display:inline-block;padding:2px 10px;border-radius:999px;font-size:12px;font-weight:600;letter-spacing:.04em;text-transform:uppercase}
 .pill.open{background:var(--accent-soft);color:var(--accent)}
 .pill.solved{background:var(--good);color:#fff}
+.pill.halted_for_review{background:var(--bad);color:#fff}
 .pill.aborted{background:var(--bad);color:#fff}
 .panel{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:16px 18px}
 .meter{height:14px;border-radius:3px;background:var(--line);overflow:hidden;position:relative}
@@ -67,10 +68,12 @@ footer{color:var(--muted);font-size:12px}
 
 <main>
   <header>
-    <h1 id="title">RhoWalkers</h1>
+    <h1 id="title">RhoNet</h1>
     <span id="status" class="pill open">open</span>
     <span class="sub" id="curve"></span>
   </header>
+
+  <div id="epoch-health" role="status" class="note"></div>
 
   <section id="solution" class="panel sol" hidden>
     <h2>Round solved</h2>
@@ -81,7 +84,7 @@ footer{color:var(--muted);font-size:12px}
 
   <section class="panel">
     <div class="meterrow">
-      <div><span class="big num" id="pct">0%</span> <span class="sub">of expected work credited</span></div>
+      <div><span class="big num" id="pct">0%</span> <span class="sub">of mean work executed (reported)</span></div>
       <div class="sub num" id="steps"></div>
     </div>
     <div class="meter" style="margin-top:10px"><i id="bar"></i><b style="left:100%"></b></div>
@@ -97,7 +100,7 @@ footer{color:var(--muted);font-size:12px}
       <div class="tbl"><table id="miners"><thead><tr>
         <th>Identity</th><th>Status</th><th class="r">DPs</th><th class="r">Credits</th><th class="r">Share</th><th class="r">Replayed</th><th class="r">Rejected</th>
       </tr></thead><tbody></tbody></table></div>
-      <div class="empty" id="miners-empty">No miner admitted yet. Run <code class="mono">python -m rhowalkers.miner</code>.</div>
+      <div class="empty" id="miners-empty">No miner admitted yet. Run <code class="mono">python -m rhonet.miner</code>.</div>
     </section>
     <div style="display:grid;gap:20px;align-content:start">
       <section class="panel">
@@ -145,23 +148,32 @@ function drawSpark() {
 async function tick() {
   const [s, miners, epochs, events] = await Promise.all(["/api/status","/api/miners","/api/epochs","/api/events"].map(u => fetch(u).then(r => r.json())));
   const R = s.round, unit = 2 ** R.credit_unit_log2;
-  document.title = `${R.round_id} · RhoWalkers`;
+  document.title = `${R.round_id} · RhoNet`;
   $("#title").textContent = R.round_id;
+  $("#epoch-health").textContent = `Epoch loop: ${s.degraded ? "DEGRADED" : "healthy"} — ${s.epoch_loop_failures} consecutive failures; ${s.dps_from_slashed} retained DPs from slashed identities`;
+  $("#epoch-health").style.color = s.degraded ? "var(--bad)" : "var(--muted)";
   $("#status").textContent = s.status; $("#status").className = "pill " + s.status;
   $("#curve").textContent = `${R.bits}-bit prime-order curve · Pollard rho, r=${R.r} adding walk · DP = ${R.w} trailing zero bits · 1 credit = 2^${R.credit_unit_log2} steps · prize ${R.prize_pool_usdc.toLocaleString()} USDC`;
 
-  const pct = s.progress * 100;
+  const pct = s.progress_executed * 100;
   $("#pct").textContent = pct.toFixed(1) + "%";
   $("#bar").style.width = Math.min(100, pct) + "%";
-  $("#steps").textContent = `${fmt(s.total_credited_steps,2)} credited steps of ${fmt(R.expected_steps,2)} expected (1.25·√n)`;
-  $("#meternote").textContent = s.status === "solved"
-    ? `Solved after ${(s.solution.ratio*100).toFixed(0)}% of the expected work. The expectation is a mean, not a deadline: the collision is a geometric event and half of all rounds end before this line.`
-    : `Expected work is a mean, not a deadline. The collision can land at 30% or at 250%; passing 100% does not mean anything is wrong. ETA at the current rate: ${dur(s.eta_seconds)}.`;
+  $("#steps").textContent = `${fmt(s.total_executed_steps,2)} executed · ${fmt(s.total_credited_steps,2)} credited (payment) · ${fmt(R.expected_steps,2)} mean (1.25·√n)`;
+  $("#meternote").textContent = s.halted
+    ? "Round halted for review: a replay-verified collision failed key verification. Work intake is closed."
+    : s.status === "solved"
+    ? `Reported executed work: ${s.solution.ratio_executed == null ? "unavailable" : (s.solution.ratio_executed*100).toFixed(0)+"% of the mean"}; credited payment accounting: ${((s.solution.ratio_credited ?? s.solution.ratio)*100).toFixed(0)}%. Executed totals include replayed tickets; search telemetry is self-reported.`
+    : `The mean is not a deadline. Rayleigh median remaining: ${dur(s.eta_seconds)}; 90% interval: ${dur(s.eta.p05_remaining_seconds)}–${dur(s.eta.p95_remaining_seconds)}. Chance in the next hour: ${s.eta.p_complete_next_hour == null ? "–" : (100*s.eta.p_complete_next_hour).toFixed(1)+"%"}. Forecast uses reported search steps and rate, excluding tickets; executed totals include tickets.`;
 
   hist.push(s.steps_per_sec); if (hist.length > 60) hist.shift(); drawSpark();
 
   $("#stats").innerHTML = [
-    stat("Network rate", fmt(s.steps_per_sec), "steps/s"),
+    stat("Reported search rate", fmt(s.steps_per_sec), "steps/s"),
+    stat("Executed steps (reported)", fmt(s.total_executed_steps)),
+    stat("Credited steps (payment)", fmt(s.total_credited_steps)),
+    stat("Executed / credited", s.executed_to_credited == null ? "–" : s.executed_to_credited.toFixed(2), "×"),
+    stat("Ticket steps (replayed)", fmt(s.total_ticket_steps)),
+    stat("Abandoned walks", fmt(s.total_abandoned_walks)),
     stat("Distinguished points", fmt(s.dps)),
     stat("Credits minted", s.total_credits.toFixed(3)),
     stat("Miners", `${s.active_miners}`, s.slashed ? `${s.slashed} slashed` : "active"),
@@ -182,7 +194,7 @@ async function tick() {
     <td class="r num">${m.rejected}</td></tr>`).join("");
   $("#miners-empty").hidden = miners.length > 0;
 
-  $("#epochs tbody").innerHTML = epochs.slice(0,8).map(e => `<tr><td class="num">${e.idx}</td><td class="mono" title="${e.root}">${short(e.root)}</td><td class="r num">${(e.total_steps/unit).toFixed(3)}</td><td class="r num">${e.miners}</td></tr>`).join("");
+  $("#epochs tbody").innerHTML = epochs.slice(0,8).map(e => `<tr><td class="num">${e.idx}</td><td class="mono" title="${e.root || "not sealed yet"}">${e.sealed ? short(e.root) : `<span style="color:var(--muted)">open</span>`}</td><td class="r num">${e.sealed ? (e.total_steps/unit).toFixed(3) : "–"}</td><td class="r num">${e.sealed ? e.miners : "–"}</td></tr>`).join("");
   $("#epochs-empty").hidden = epochs.length > 0;
 
   $("#events").innerHTML = events.map(e => {
@@ -192,8 +204,14 @@ async function tick() {
       ticket_rejected: `${d.pubkey}… ticket did not replay`,
       slashed: `${d.pubkey}… slashed: ${d.why}`,
       epoch_closed: `epoch ${d.epoch} root ${d.root}… (${(d.total_steps/unit).toFixed(3)} credits, ${d.miners} miners)`,
-      solved: `k = ${d.k_hex} found by ${d.finder}… × ${d.partner}… at ${(d.ratio*100).toFixed(0)}% of expected work`,
-    }[e.kind] || JSON.stringify(d);
+      solved: `k = ${d.k_hex} found by ${d.finder}… × ${d.partner}… (payment credit / mean: ${(d.ratio*100).toFixed(0)}%)`,
+      epoch_audit: `epoch ${d.epoch}: ${d.targets} replayed, ${d.passed} passed, ${d.failed} failed`,
+      delayed_audit: `epoch ${d.epoch} second pass: ${d.targets} replayed, ${d.passed} passed, ${d.failed} failed`,
+      audit_failed: `${d.pubkey}… failed ${d.failures} replay${d.failures === 1 ? "" : "s"} in epoch ${d.epoch}, first at t=${d.first_failing_t}`,
+      collision_replay_failed: `${d.pubkey}… submitted a point that does not replay; row removed`,
+      degenerate_collision: `useless collision at x=${String(d.x).slice(0,12)}… (${d.kind})`,
+      halted_for_review: `round halted: a verified pair produced a k that fails k·G = Q`,
+    }[e.kind] || Object.entries(d).slice(0, 4).map(([k, v]) => `${k}=${String(v).slice(0, 28)}`).join(" ");
     return `<li><span class="t num">${ago(e.ts)} ago</span><span class="k ${e.kind}">${e.kind.replace("_"," ")}</span><span>${txt}</span></li>`;
   }).join("");
 
@@ -201,7 +219,7 @@ async function tick() {
     const sol = s.solution;
     $("#solution").hidden = false;
     $("#sol-k").textContent = `k = ${sol.k}  (${sol.k_hex})`;
-    $("#sol-note").textContent = `k·G = Q ${sol.verified ? "verified" : "FAILED"} · collision at x = ${sol.collision_x} between walks of ${short(sol.finder)} and ${short(sol.partner)} · ${fmt(sol.total_credited_steps,2)} credited steps = ${(sol.ratio*100).toFixed(0)}% of expected · pool split once, pro rata to credits minted in this round.`;
+    $("#sol-note").textContent = `k·G = Q ${sol.verified ? "verified" : "FAILED"} · collision at x = ${sol.collision_x} between walks of ${short(sol.finder)} and ${short(sol.partner)} · ${fmt(sol.total_executed_steps,2)} executed steps (reported) · ${fmt(sol.total_credited_steps,2)} credited steps (payment) · executed/credited ${sol.executed_to_credited == null ? "–" : sol.executed_to_credited.toFixed(2)+"×"} · pool split once, pro rata to credits minted in this round.`;
     $("#payouts tbody").innerHTML = sol.payouts.map(p => `<tr><td class="mono">${p.payout_addr}</td><td class="r num">${p.credits.toFixed(3)}</td><td class="r num">${(p.share*100).toFixed(2)}%</td><td class="r num">${p.usdc.toFixed(2)}</td></tr>`).join("");
   }
   $("#foot").textContent = `Coordinator v1 (single operator). Every number on this page is recomputable from the round spec: start points are PRF(round, identity, t), tickets and 1-in-${R.spot_check_rate} DP segments are replayed with the same walk.`;

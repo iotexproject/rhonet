@@ -9,3 +9,5 @@ contracts/cache/
 contracts/lib/
 demo_run.log
 .wrangler/
+cache/
+out/

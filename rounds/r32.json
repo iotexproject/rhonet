@@ -1,25 +1,25 @@
 {
-  "round_id": "ecc-p32-2ccd56",
+  "round_id": "ecc-p32-13d6fa",
   "curve": {
-    "p": 4184259517,
-    "a": 3254069134,
-    "b": 2985854506,
-    "n": 4184215621,
-    "gx": 2598788408,
-    "gy": 1457822826
+    "p": 3780637477,
+    "a": 2590631718,
+    "b": 3000065869,
+    "n": 3780683239,
+    "gx": 2738113402,
+    "gy": 912905899
   },
-  "qx": 3344002999,
-  "qy": 1152177868,
+  "qx": 1756202480,
+  "qy": 1322525730,
   "bits": 32,
   "w": 8,
-  "r": 32,
+  "r": 128,
   "ticket_d": 12,
   "credit_unit_log2": 20,
   "spot_check_rate": 64,
   "epoch_seconds": 20,
   "quota_dps_per_epoch_base": 65536,
   "prize_pool_usdc": 10000.0,
-  "max_walk_len_log2": 13,
-  "expected_steps": 80856.89152949488,
-  "created_at": 1788708202
+  "max_walk_len_log2": 11,
+  "expected_steps": 76859.07598284993,
+  "created_at": 1788886331
 }

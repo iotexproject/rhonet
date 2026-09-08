@@ -52,7 +52,7 @@ footer a{color:var(--accent)}
 </head>
 <body>
 <main>
-<nav><span class="brand">RhoNet</span><span><a href="#how">How it works</a><a href="#demo">Demo</a><a href="#ladder">The ladder</a><a href="https://github.com/iotexproject/rhonet">GitHub</a></span></nav>
+<nav><span class="brand">RhoNet</span><span><a href="#how">How it works</a><a href="#demo">Demo</a><a href="#calibration">Calibration</a><a href="#ladder">The ladder</a><a href="https://github.com/iotexproject/rhonet">GitHub</a></span></nav>
 
 <h1>A crowd of walkers on a curve, paid the moment two of them collide.</h1>
 <p class="lede">RhoNet is a mining pool for cryptanalysis. Anyone with a GPU runs Pollard rho against a public elliptic-curve challenge, every unit of verified work mints one credit, and the prize is split once, pro rata, when the round is solved.</p>
@@ -60,8 +60,8 @@ footer a{color:var(--accent)}
 <canvas class="walk" id="walk" aria-hidden="true"></canvas>
 
 <div class="notice">
-  <b>Status: under remediation, do not run a public round.</b>
-  <p>An external security review on 8 September 2026 found four critical defects in this demonstrator, two of which we reproduced. The audit selector was predictable, so a miner that filtered its work identifiers could be paid for fabricated work and never be replayed. Stored points were never re-verified, so one participant could poison the table and consume the genuine collision in silence. The vault let the operator withdraw a sponsor's deposit at any time. Every finding, its reproduction and its fix are tracked in the open: <a href="https://github.com/iotexproject/rhonet/blob/main/review/2026-09-08-external-review.md">review/2026-09-08-external-review.md</a>.</p>
+  <b>Status: remediated, one operator, no public round yet.</b>
+  <p>An external security review on 8 September 2026 found four critical defects, two of which we reproduced before fixing. All four are closed, along with six high-severity findings, and a manual review of the repair turned up two more: a second audit pass that was structurally incapable of detecting anything, and an audit seed a dominant miner could predict. Every finding, its reproduction, its fix and the residual risks we chose to carry are in the open: <a href="https://github.com/iotexproject/rhonet/blob/main/review/2026-09-08-external-review.md">review/2026-09-08-external-review.md</a>.</p>
 </div>
 
 <h2>Why this is hard to organize</h2>
@@ -82,17 +82,27 @@ footer a{color:var(--accent)}
 </div>
 
 <h2 id="demo">The MVP, end to end</h2>
-<p>Everything above runs today in Python on toy curves. A 56-bit round on one laptop: three honest miners with 3, 2 and 1 processes, one cheater submitting real-looking points with invented coefficients. One run is an anecdote, not a calibration: rho completion has a standard deviation near 52% of its mean, so anything between 20% and 250% of expectation is ordinary.</p>
+<p>Everything above runs today in Python on toy curves. A 56-bit round on one laptop: three honest miners with 3, 2 and 1 processes, one cheater submitting real-looking points with invented coefficients, and one that filters its work identifiers to dodge the audit. Both are slashed by the post-commitment audit; all three honest miners are paid pro rata.</p>
 <div class="tbl"><table>
-<tr><th>Expected work</th><td class="mono">3.1e8 steps (1.25·√n)</td></tr>
-<tr><th>Solved after</th><td>74% of expected, about 100 seconds, <span class="mono">k</span> verified against the generator's secret</td></tr>
-<tr><th>Payouts</th><td class="mono">46.2% / 35.2% / 18.6%</td></tr>
-<tr><th>Cheater</th><td>a naive one is slashed on its first replayed segment; an adversary that filters its work identifiers evaded the audit entirely until the selector was rebuilt on post-commitment entropy</td></tr>
-<tr><th>Replays</th><td class="mono">191 of 14,060 segments (1 in 64), 0 false positives</td></tr>
-<tr><th>Ledger</th><td>7 epoch roots; proofs verify in Python and inside the Solidity vault</td></tr>
+<tr><th>Miners</th><td>3 honest, paid 47.8% / 35.4% / 16.8%, matching their process counts</td></tr>
+<tr><th>Adversaries</th><td>both slashed by the epoch audit, credits zeroed, keys blocked</td></tr>
+<tr><th>Solution</th><td>k verified against the generator's secret on every run</td></tr>
+<tr><th>Ledger</th><td>epoch roots with published beacon commitments and reveals; Merkle proofs verify in Python and inside the Solidity vault</td></tr>
+<tr><th>Tests</th><td>13 Python files and 35 Foundry tests, including a 256-run conservation fuzz</td></tr>
 </table></div>
 <div class="shot" style="margin-top:18px"><img src="dashboard.png" alt="Coordinator dashboard after a solved 56-bit round: solution, payouts, progress meter, miners, epoch roots, events"></div>
 <p class="cap">The coordinator dashboard after the round above.</p>
+
+<h2 id="calibration">What one run proves, and what it does not</h2>
+<p>A single solve says almost nothing here. Pollard rho's completion count has a standard deviation near half its mean, so a round finishing at 40% or at 200% of expectation is ordinary. We replaced the anecdote with a calibration: 300 independent solves at each of four sizes, each one checked against the generator's secret.</p>
+<div class="tbl"><table>
+<thead><tr><th>Bits</th><th class="r">Solves</th><th class="r">Mean, in units of &#8730;n</th><th class="r">3&#963; interval of the mean</th><th class="r">10th to 90th percentile</th></tr></thead>
+<tr><td class="num">28</td><td class="r num">300</td><td class="r num">1.186</td><td class="r num">1.084 &ndash; 1.287</td><td class="r num">0.50 &ndash; 2.00</td></tr>
+<tr><td class="num">32</td><td class="r num">300</td><td class="r num">1.227</td><td class="r num">1.114 &ndash; 1.339</td><td class="r num">0.50 &ndash; 2.09</td></tr>
+<tr><td class="num">36</td><td class="r num">300</td><td class="r num">1.241</td><td class="r num">1.122 &ndash; 1.360</td><td class="r num">0.51 &ndash; 2.10</td></tr>
+<tr><td class="num">40</td><td class="r num">300</td><td class="r num">1.182</td><td class="r num">1.077 &ndash; 1.287</td><td class="r num">0.49 &ndash; 2.02</td></tr>
+</table></div>
+<p style="margin-top:14px">The theoretical constant for an r-adding walk without the negation map is 1.25. Fitting step count against group size across the four sizes gives an exponent of <span class="mono">0.5000</span> with <span class="mono">R&#178; = 0.9998</span>, which is the property that matters: cost is square-root in the group order, with the constant where theory puts it. Before the branch function was decorrelated from the distinguished-point predicate, every distinguished point took the same branch out of 128, a defect that would have surfaced only as a slightly wrong exponent.</p>
 <pre>python3 -m venv .venv &amp;&amp; .venv/bin/pip install fastapi 'uvicorn[standard]' cryptography httpx
 ./demo.sh                     # 56-bit round, coordinator, 3 honest miners + 1 cheater
 open http://127.0.0.1:8642    # dashboard</pre>

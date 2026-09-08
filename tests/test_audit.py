@@ -8,8 +8,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from rhowalkers import ec, merkle
-from rhowalkers.coordinator import Coordinator, SCHEMA, T_WINDOW
+from rhonet import ec, merkle
+from rhonet.coordinator import Coordinator, SCHEMA, T_WINDOW
 
 
 class AuditTests(unittest.TestCase):
@@ -17,10 +17,13 @@ class AuditTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.spec = ec.RoundSpec.load(str(Path(__file__).resolve().parents[1] / 'rounds/r32.json'))
+        secret = patch('rhonet.coordinator.secrets.token_bytes', return_value=bytes(range(32)))
+        secret.start()
+        self.addCleanup(secret.stop)
         self.coord = Coordinator(self.spec, str(Path(self.tmp.name) / 'audit.sqlite'))
         self.addCleanup(self.coord.db.close)
         # Freeze epoch zero until each test explicitly crosses its boundary.
-        self.clock = patch('rhowalkers.coordinator.now', return_value=self.coord.started_at + 1)
+        self.clock = patch('rhonet.coordinator.now', return_value=self.coord.started_at + 1)
         self.clock.start()
         self.addCleanup(self.clock.stop)
         self.seen = set()
@@ -81,7 +84,7 @@ class AuditTests(unittest.TestCase):
         self.assertEqual(self.miner(evil)[:2], ('slashed', 0))
         self.assertEqual(self.miner(honest)[0], 'active')
         root = bytes.fromhex(self.coord.db.execute('SELECT root FROM epochs WHERE idx=0').fetchone()[0])
-        targets = [dp for dp in bad if int.from_bytes(ec.H(root, 'spot', evil, dp['t']), 'big') % self.spec.spot_check_rate == 0]
+        targets = [dp for dp in bad if int.from_bytes(ec.H(root, self.coord.beacon_for(0), 'spot', evil, dp['t']), 'big') % self.spec.spot_check_rate == 0]
         self.assertTrue(targets)
         failures = [e for e in self.coord.events_view(1000) if e['kind'] == 'audit_failed']
         self.assertTrue(any(e['detail']['pubkey'] == evil[:16] and e['detail']['epoch'] == 0 for e in failures))
@@ -89,12 +92,12 @@ class AuditTests(unittest.TestCase):
     def test_old_nonzero_selector_is_caught_after_close(self):
         pk, address = 'ef' * 32, '0x' + '33' * 20
         self.admit(pk, address)
-        # A fixed one-DP fixture whose published root selects the old-selector
+        # A one-DP fixture whose root and private test beacon select the old-selector
         # evasion. No selector or replay is mocked in either attack regression.
         root, _ = merkle.build([merkle.leaf_hash(address, 1 << self.spec.w)])
         bad = None
         for t in range(T_WINDOW):
-            if self.old_selector(pk, t) and int.from_bytes(ec.H(root, 'spot', pk, t), 'big') % self.spec.spot_check_rate == 0:
+            if self.old_selector(pk, t) and int.from_bytes(ec.H(root, self.coord.beacon_for(0), 'spot', pk, t), 'big') % self.spec.spot_check_rate == 0:
                 bad = self.dp(pk, t, fake=True)
                 if bad:
                     break
@@ -157,7 +160,11 @@ class AuditTests(unittest.TestCase):
             [(pk, t, '0', '0', '0', '0', 1, 0, 0, 0) for t in range(600)])
         self.coord.db.commit()
         # All qualify, with selectors in reverse order to test deterministic cap.
-        def selector(root, tag, key, t):
+        original_hash = ec.H
+        def selector(*parts):
+            if len(parts) != 5 or parts[2] not in ("spot", "spot2"):
+                return original_hash(*parts)
+            root, beacon, tag, key, t = parts
             return ((600 - t) * self.spec.spot_check_rate * 8).to_bytes(32, 'big')
         with patch.object(ec, 'H', side_effect=selector), patch.object(ec, 'dp_verify', return_value=True) as verify:
             self.coord.audit_epoch(0, b'root')
@@ -168,14 +175,40 @@ class AuditTests(unittest.TestCase):
             verify.assert_not_called()
             self.coord.audit_delayed(1, b'new-root')
             self.assertEqual(verify.call_count, 64)
+            self.assertEqual([c.args[3]['t'] for c in verify.call_args_list], list(range(87, 23, -1)))
+            self.assertEqual(self.coord.db.execute('SELECT COUNT(*) FROM dps WHERE checked=1').fetchone()[0], 576)
         with patch.object(ec, 'H', side_effect=selector), patch.object(ec, 'dp_verify', return_value=False):
             self.coord.audit_delayed(2, b'later-root')
         self.assertEqual(self.miner(pk)[:2], ('slashed', 0))
 
+    def test_multiple_failures_emit_one_slash_with_evidence(self):
+        pk = '78' * 32
+        self.admit(pk, '0x' + '77' * 20)
+        bad = []
+        for t in range(100):
+            dp = self.dp(pk, t, fake=True)
+            if dp:
+                bad.append(dp)
+            if len(bad) == 11:
+                break
+        self.assertEqual(self.coord.submit(pk, bad)['accepted'], 11)
+        with patch.object(ec, 'H', return_value=bytes(32)):
+            self.coord.audit_epoch(0, b'root')
+        events = self.coord.events_view(1000)
+        for kind in ('slashed', 'audit_failed'):
+            matching = [e['detail'] for e in events if e['kind'] == kind]
+            self.assertEqual(len(matching), 1)
+            self.assertEqual(matching[0]['failures'], 11)
+            self.assertEqual(matching[0]['first_failing_t'], bad[0]['t'])
+            self.assertEqual(matching[0]['epoch'], 0)
+            self.assertEqual(matching[0]['evidence']['claimed'],
+                             {k: str(bad[0][k]) for k in ('a', 'b', 'x', 'y')})
+        self.assertEqual(self.coord.miners_view()[0]['spot_fails'], 1)
+
     def test_legacy_schema_migration_is_idempotent(self):
         path = str(Path(self.tmp.name) / 'legacy.sqlite')
         legacy = '\n'.join(line for line in SCHEMA.splitlines()
-                           if not line.strip().startswith(('next_t INTEGER', 'epoch INTEGER', 'CREATE INDEX IF NOT EXISTS dps_epoch_checked')))
+                           if not line.strip().startswith(('next_t INTEGER', 'epoch INTEGER', 'slashed INTEGER', 'last_seq INTEGER', 'CREATE INDEX IF NOT EXISTS dps_epoch_checked')))
         db = sqlite3.connect(path)
         db.executescript(legacy)
         db.execute("INSERT INTO dps VALUES('0','0','0','0','legacy',7,1,0,0)")
@@ -186,7 +219,8 @@ class AuditTests(unittest.TestCase):
             try:
                 self.assertEqual(coord.db.execute('SELECT epoch FROM dps').fetchone()[0], -1)
                 columns = {r[1] for r in coord.db.execute('PRAGMA table_info(miners)')}
-                self.assertTrue({'next_t', 't_gaps'} <= columns)
+                self.assertTrue({'next_t', 't_gaps', 'last_seq'} <= columns)
+                self.assertEqual(coord.db.execute('SELECT slashed FROM dps').fetchone()[0], 0)
                 self.assertTrue(coord.db.execute("SELECT 1 FROM sqlite_master WHERE name='dps_epoch_checked'").fetchone())
             finally:
                 coord.db.close()

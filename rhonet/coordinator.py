@@ -251,6 +251,7 @@ class Coordinator:
         self.registry_dir = os.environ.get("RHONET_REGISTRY", os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "contributors"))
         self.registry = {}
+        self.devices = {}
         self.reload_registry()
         self.rate_window = deque(maxlen=600)  # (ts, steps) for live throughput
         self.started_at = float(self._get_state("started_at") or now())
@@ -396,7 +397,7 @@ class Coordinator:
             return {"rotated": True, "epoch": self.current_epoch(), "payout_addr": address.lower()}
 
     # ---------------------------------------------------------------- admission
-    def admit(self, pubkey: str, payout_addr: str, ticket: dict, freshness=None):
+    def admit(self, pubkey: str, payout_addr: str, ticket: dict, freshness=None, device=None):
         spec = self.spec
         with self.lock:
             if self.status != "open":
@@ -436,6 +437,8 @@ class Coordinator:
                 # Successful verification independently recomputed this exact count.
                 (pubkey, payout_addr.lower(), json.dumps(ticket), now(), ep, now(), int(ticket["steps"])),
             )
+            if isinstance(device, str) and 0 < len(device) <= 80:
+                self.devices[pubkey] = device
             self.db.commit()
             self._accept_seq(pubkey, freshness)
             self.event("miner_admitted", {"pubkey": pubkey[:16], "ticket_steps": ticket["steps"], "verify_ms": round((time.time() - t0) * 1000)})
@@ -1025,7 +1028,9 @@ class Coordinator:
              # A key becomes a name only if its holder registered it publicly; an
              # unregistered key is shown as a key, never as somebody's account.
              "github": (self.registry.get(r[0]) or {}).get("github"),
-             "device": (self.registry.get(r[0]) or {}).get("device")}
+             # Self-reported at admission, falling back to whatever the registry
+             # claims. Never a measured fact, so it is labelled as reported.
+             "device": self.devices.get(r[0]) or (self.registry.get(r[0]) or {}).get("device")}
             for r in rows
         ]
 
@@ -1198,7 +1203,8 @@ def build_app(coord: Coordinator) -> FastAPI:
         Coordinator.verify_sig(body["pubkey"], body, sig or "")
         with TICKET_GATE.enter():
             return coord.admit(body["pubkey"], body["payout_addr"], body["ticket"],
-                               freshness=(body.get("epoch"), body.get("seq")))
+                               freshness=(body.get("epoch"), body.get("seq")),
+                               device=body.get("device"))
 
     @app.post("/api/submit")
     def submit(req: Request, body: dict):

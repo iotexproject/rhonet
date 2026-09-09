@@ -1,0 +1,25 @@
+{
+  "round_id": "public-demo",
+  "curve": {
+    "p": 3099422549981,
+    "a": 2590688873845,
+    "b": 2386020064256,
+    "n": 3099423564527,
+    "gx": 741426543524,
+    "gy": 19346756965
+  },
+  "qx": 2472743363235,
+  "qy": 2014744434908,
+  "bits": 42,
+  "w": 10,
+  "r": 128,
+  "ticket_d": 14,
+  "credit_unit_log2": 20,
+  "spot_check_rate": 64,
+  "epoch_seconds": 10,
+  "quota_dps_per_epoch_base": 65536,
+  "prize_pool_usdc": 10000.0,
+  "max_walk_len_log2": 13,
+  "expected_steps": 2200647.477351481,
+  "created_at": 1788911984
+}

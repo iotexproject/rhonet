@@ -1,4 +1,4 @@
-"""RhoNet miner: Ed25519 identity -> curve-native ticket -> N worker processes
+"""RhoNet walker: Ed25519 identity -> curve-native admission -> N worker processes
 running batched rho walks -> signed DP batches every few seconds.
 
     python -m rhonet.walker --coordinator http://127.0.0.1:8642 --procs 4 --payout 0x...
@@ -58,16 +58,16 @@ def post_with_retry(client, path, build_body, *, budget=300.0, label="request"):
         waited = time.monotonic() - started
         remaining = budget - waited
         if remaining <= 0:
-            print(f"[miner] {path} {label}: retry budget exhausted after {waited:.1f}s",
+            print(f"[walker] {path} {label}: retry budget exhausted after {waited:.1f}s",
                   file=sys.stderr)
             return response
         delay = min(remaining, backoff * random.uniform(0.75, 1.25))
-        print(f"[miner] {path} {reason}, retrying in {delay:.1f}s "
+        print(f"[walker] {path} {reason}, retrying in {delay:.1f}s "
               f"(waited {waited:.1f}s of {budget:g}s budget)", file=sys.stderr)
         time.sleep(delay)
         backoff = min(10.0, backoff * 2)
         if time.monotonic() - started >= budget:
-            print(f"[miner] {path} {label}: retry budget exhausted after {budget:g}s",
+            print(f"[walker] {path} {label}: retry budget exhausted after {budget:g}s",
                   file=sys.stderr)
             return response
 
@@ -79,6 +79,31 @@ def retain_deferred(pending, batch, result):
                  if reason in ("audit backlog", "quota", "rate limit"))
     return sorted([dp for i, dp in enumerate(batch) if i in retry] + pending[len(batch):],
                   key=lambda dp: dp["t"])
+
+
+def detect_device() -> str:
+    """A short, self-reported label for the hardware doing the work.
+
+    Advisory only: it is not signed by anything and a walker can claim whatever it
+    likes, so the board must present it as self-reported rather than as a fact.
+    It exists so a search can show what kind of machines are actually contributing.
+    """
+    import platform, subprocess
+    try:
+        if platform.system() == "Darwin":
+            chip = subprocess.run(["sysctl", "-n", "machdep.cpu.brand_string"],
+                                  capture_output=True, text=True, timeout=3).stdout.strip()
+            model = subprocess.run(["sysctl", "-n", "hw.model"],
+                                   capture_output=True, text=True, timeout=3).stdout.strip()
+            if chip:
+                return (chip + (f" ({model})" if model and model not in chip else ""))[:80]
+        if platform.system() == "Linux":
+            for line in open("/proc/cpuinfo"):
+                if line.startswith("model name"):
+                    return line.split(":", 1)[1].strip()[:80]
+    except Exception:
+        pass
+    return f"{platform.system()} {platform.machine()}"[:80]
 
 
 def load_or_create_key(path: str) -> Ed25519PrivateKey:
@@ -146,6 +171,7 @@ def main(argv=None):
     ap.add_argument("--procs", type=int, default=max(1, (os.cpu_count() or 2) // 2))
     ap.add_argument("--batch", type=int, default=64)
     ap.add_argument("--flush", type=float, default=2.0, help="seconds between signed submissions")
+    ap.add_argument("--device", default=None, help="hardware label to report; detected if omitted")
     ap.add_argument("--cheat", action="store_true")
     ap.add_argument("--cheat-evasive", action="store_true", help="fabricate only DPs skipped by the old audit selector")
     ap.add_argument("--max-seconds", type=float, default=None)
@@ -159,11 +185,12 @@ def main(argv=None):
     spec_dict = client.get("/api/round").json()
     spec = ec.RoundSpec.from_dict(spec_dict)
     table = ec.walk_table(spec)
-    print(f"[miner] round {spec.round_id} ({spec.bits}-bit), w={spec.w}, expected {spec.expected_steps:.2e} steps; identity {pk[:16]}…", file=sys.stderr)
+    print(f"[walker] round {spec.round_id} ({spec.bits}-bit), w={spec.w}, expected {spec.expected_steps:.2e} steps; identity {pk[:16]}…", file=sys.stderr)
 
     t0 = time.time()
+    device = args.device or detect_device()
     ticket = ec.ticket_solve(spec, table, pk)
-    print(f"[miner] ticket minted in {time.time()-t0:.1f}s ({ticket['steps']} steps, nonce {ticket['nonce']})", file=sys.stderr)
+    print(f"[walker] ticket minted in {time.time()-t0:.1f}s ({ticket['steps']} steps, nonce {ticket['nonce']})", file=sys.stderr)
     # Timestamp seed avoids resetting seq to zero when reusing an identity.
     seq = itertools.count(time.time_ns())
     def fresh_body(**fields):
@@ -172,12 +199,12 @@ def main(argv=None):
                             "epoch": epoch, "seq": next(seq)})
 
     r = post_with_retry(client, "/api/ticket",
-                        lambda: fresh_body(payout_addr=payout, ticket=ticket), label="admission")
+                        lambda: fresh_body(payout_addr=payout, ticket=ticket, device=device), label="admission")
     if r is None or r.status_code != 200:
-        print(f"[miner] admission unsuccessful: {r.status_code if r is not None else 'transport failure'}", file=sys.stderr)
+        print(f"[walker] admission unsuccessful: {r.status_code if r is not None else 'transport failure'}", file=sys.stderr)
         return 2
     epoch = r.json()["epoch"]
-    print(f"[miner] admitted (epoch {r.json()['epoch']}); payout {payout}", file=sys.stderr)
+    print(f"[walker] admitted (epoch {r.json()['epoch']}); payout {payout}", file=sys.stderr)
 
     ctx = mp.get_context("fork")
     q = ctx.Queue(maxsize=max(2, args.procs * 2))
@@ -215,11 +242,11 @@ def main(argv=None):
                                     lambda: fresh_body(dps=batch, steps_done=steps_pending,
                                                        abandoned=abandoned_pending), label="submission")
                 if r is None or retryable_response(r):
-                    print("[miner] retaining pending work; will retry submission", file=sys.stderr)
+                    print("[walker] retaining pending work; will retry submission", file=sys.stderr)
                     last_flush = time.time()
                     continue
                 if r.status_code != 200:
-                    print(f"[miner] submit failed: {r.status_code} {r.text}", file=sys.stderr)
+                    print(f"[walker] submit failed: {r.status_code} {r.text}", file=sys.stderr)
                     rc = 3
                     break
                 res = r.json()
@@ -231,25 +258,25 @@ def main(argv=None):
                 sent_dps += res.get("accepted", 0)
                 credited_steps += res.get("accepted", 0) << spec.w
                 el = time.time() - started
-                print(f"[miner] {el:6.0f}s  local {fmt(steps_local/el)} steps/s  sent {sent_dps} DPs  credited {credited_steps/(1<<spec.credit_unit_log2):.3f} credits  "
+                print(f"[walker] {el:6.0f}s  local {fmt(steps_local/el)} steps/s  sent {sent_dps} DPs  credited {credited_steps/(1<<spec.credit_unit_log2):.3f} credits  "
                       f"rejected {len(res.get('rejected', []))}  checked {res.get('checked', 0)}", file=sys.stderr)
                 if res.get("slashed"):
-                    print(f"[miner] SLASHED: {res['rejected'][-1:] }", file=sys.stderr)
+                    print(f"[walker] SLASHED: {res['rejected'][-1:] }", file=sys.stderr)
                     rc = 4
                     break
                 if res.get("solved") or res.get("status") == "solved":
                     sol = res.get("solved")
                     if sol:
-                        print(f"[miner] ROUND SOLVED  k = {sol['k']}  (verified={sol['verified']}, credited/expected = {sol['ratio']:.2f})", file=sys.stderr)
+                        print(f"[walker] ROUND SOLVED  k = {sol['k']}  (verified={sol['verified']}, credited/expected = {sol['ratio']:.2f})", file=sys.stderr)
                         me = [p for p in sol["payouts"] if p["pubkey"] == pk]
                         if me:
-                            print(f"[miner] my share {me[0]['share']*100:.2f}% -> {me[0]['usdc']:.2f} USDC", file=sys.stderr)
+                            print(f"[walker] my share {me[0]['share']*100:.2f}% -> {me[0]['usdc']:.2f} USDC", file=sys.stderr)
                     else:
-                        print("[miner] round already solved", file=sys.stderr)
+                        print("[walker] round already solved", file=sys.stderr)
                     break
                 last_flush = time.time()
             if args.max_seconds and time.time() - started > args.max_seconds:
-                print("[miner] time limit reached", file=sys.stderr)
+                print("[walker] time limit reached", file=sys.stderr)
                 rc = 5
                 break
     except KeyboardInterrupt:

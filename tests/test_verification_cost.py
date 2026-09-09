@@ -14,9 +14,25 @@ from rhonet import ec
 from rhonet.coordinator import Coordinator
 
 
+def _round_spec(bits: int):
+    from rhonet import gencurve
+    import secrets
+    curve = gencurve.gen(bits)
+    k = secrets.randbelow(curve.n - 1) + 1
+    Q = curve.mul(k, curve.G)
+    return ec.RoundSpec(
+        round_id=f"cost{bits}-{secrets.token_hex(3)}", curve=curve, qx=Q[0], qy=Q[1], bits=bits,
+        w=8, r=128, ticket_d=9, credit_unit_log2=10, spot_check_rate=64,
+        epoch_seconds=3600, quota_dps_per_epoch_base=1 << 30, prize_pool_usdc=0.0,
+        max_walk_len_log2=11)
+
+
 class VerificationCostTests(unittest.TestCase):
     def test_real_round_verification_budget(self):
-        base = ec.RoundSpec.load(str(Path(__file__).resolve().parents[1] / 'rounds/cost40.json'))
+        # Generate the round rather than depending on a committed artefact, so the
+        # test is self-contained on a fresh checkout. A 40-bit curve takes about a
+        # second to produce and is large enough for the ratio to mean something.
+        base = _round_spec(40)
         for rate in (1, 64, 4096):
             with self.subTest(rate=rate), tempfile.TemporaryDirectory() as tmp:
                 fields = dict(w=8, ticket_d=9, max_walk_len_log2=11, spot_check_rate=rate)

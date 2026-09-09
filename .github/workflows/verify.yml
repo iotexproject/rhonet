@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 jobs:
   contributors:
@@ -66,3 +67,43 @@ jobs:
         run: |
           forge install foundry-rs/forge-std --no-git
           forge test -vv
+
+  deploy:
+    name: deploy rhonet.dev
+    # The site is never published from a red tree. Every check above must pass
+    # first, and only a push to main deploys: pull requests build nothing.
+    needs: [contributors, audit-trail, tests, contracts]
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: deploy-rhonet
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fail early with a readable message if the token is missing
+        env:
+          TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [ -z "$TOKEN" ] || [ -z "$ACCOUNT" ]; then
+            echo "::error::CLOUDFLARE_API_TOKEN or CLOUDFLARE_ACCOUNT_ID is not set."
+            echo "Create a Cloudflare API token with Account > Workers Scripts > Edit"
+            echo "and add both as repository secrets. See DEPLOY.md."
+            exit 1
+          fi
+      - uses: actions/setup-node@v4
+        with: {node-version: "22"}
+      - name: Publish the site to Cloudflare Workers
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx --yes wrangler@latest deploy
+      - name: Confirm the live site is serving this commit's page
+        run: |
+          for i in $(seq 1 12); do
+            body=$(curl -fsS https://rhonet.dev/ || true)
+            title=$(printf '%s' "$body" | grep -o '<title>[^<]*</title>' || true)
+            if [ -n "$title" ]; then echo "live: $title"; exit 0; fi
+            sleep 5
+          done
+          echo "::error::rhonet.dev did not serve a page after the deploy"; exit 1

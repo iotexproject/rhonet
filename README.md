@@ -69,15 +69,19 @@ The coordinator replays it once per identity; quota then doubles every epoch.
 **Cheating is caught by replay, not by proof.** A sample of submitted segments is walked
 again from its PRF start. Selection happens after the batch is sealed, seeded by the epoch's
 Merkle root mixed with a beacon no participant can compute in advance, so a forger cannot know
-what will be picked; work identifiers are sequential per identity, so it cannot choose them
-either. A second pass re-audits older points the first pass never chose. One failure slashes
+what will be picked. Work identifiers are deliberately unconstrained: the audit samples a
+fixed fraction of each identity's submissions, so the count replayed follows how much you
+submitted rather than which identifiers you chose, and choosing them freely buys nothing. A second pass re-audits older points the first pass never chose. One failure slashes
 the identity, zeroes its credits and blocks re-admission under that key. Both sides of a
 candidate collision are replayed before `k` is trusted.
 
 **Settlement is pull-based.** Every epoch the coordinator posts one Merkle root of
 `(payout address, credited steps)`. After the solve it posts the final root and the total;
-each contributor sends one `claim(steps, proof)` transaction. Operator gas does not scale with
-the number of contributors. Abort is a condition rather than a decision: an external solve, a
+each contributor sends one `claim(steps, proof)` transaction, so no operator gas is spent per
+payout. Binding the denominator does cost the operator: `postRoot` now carries the full leaf
+set so the contract can reconstruct the root itself, which is O(number of contributors) in
+calldata every epoch. Decoupling that, a cheap root per epoch and one bound `settle`, is a
+known follow-up. Abort is a condition rather than a decision: an external solve, a
 deadline, or coordinator silence must be provable on chain and callable by anyone, and each
 sponsor recovers their own deposit.
 

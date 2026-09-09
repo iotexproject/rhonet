@@ -356,7 +356,7 @@ limitation we are choosing to carry, stated here rather than hidden).
 
 | ID | Status | What landed |
 |---|---|---|
-| C-1 | **fixed** | Audit selection moved out of the submission path into epoch close and seeded from the epoch's own Merkle root, which does not exist until every other participant's batch is sealed. `t` is no longer free: it is sequential per identity within a bounded reorder window, with gap accounting and slashing above 25% gaps. A delayed second pass re-audits already-accepted points from older epochs under a separate seed. |
+| C-1 | **fixed** | Audit selection moved out of the submission path into epoch close, seeded by the previous completed root mixed with a beacon, and restructured: a fixed fraction of **each identity's own** submissions is sampled rather than a global 1-in-N draw. That is what closes the finding, and it closes it more completely than the recommendation did, because the number of an identity's points that get replayed no longer depends on which identifiers it chose or on knowing the seed. A delayed second pass re-audits older points the first pass never picked. **Correction, 9 September:** this row previously claimed identifiers are sequential per identity with gap accounting and slashing. That was never implemented — `T_WINDOW` is defined and unused and `t_gaps` is never incremented — and under per-identity fractional sampling it is not needed. The claim has been removed from the README and the site rather than the dead code being completed. |
 | C-2 | **fixed** | Both sides of every candidate collision are replayed unconditionally. A one-sided failure slashes that identity, deletes the poisoned row so it can no longer consume the real collision, and emits the failing segment as evidence. A verified pair that still fails `k·G = Q` halts the round for review. Degenerate collisions are counted separately and are not treated as faults. |
 | C-3 | **fixed** | The vault was rewritten. Per-depositor accounting with `refundClaim`; the unconditional operator drain is deleted; three permissionless abort triggers (deadline, stall, external solve proved by a foreign `k`); the denominator is bounded by an accumulator so shares can never exceed the pool; settlement requires an on-chain `reveal(k)` verified as `k·G = Q`. Residual risk on the denominator is stated below. |
 | C-4 | **partial** | Ticket verification no longer replays a submitter-supplied step count: it recomputes to the first ticket-difficulty point under a cap fixed by the round spec, and runs outside the global lock. Replay cost is bounded by a spec constant rather than by anything a submitter sends. Token-bucket limits per key and per IP, plus bounded concurrent verification. Not done: true checkpoint-local segment replay, which needs a checkpoint chain in the payload and an interactive challenge, and a connection-pooled database in place of one connection behind one lock. |
@@ -413,3 +413,35 @@ and a binary encoding are follow-ups.
    affordable once per round but not optimal.
 6. Connection pooling and short transactions in the coordinator.
 7. A kangaroo walk, without which no bounded-interval target is reachable.
+
+
+---
+
+# Second-round review, 9 September 2026
+
+An independent follow-up reviewed the remediation above. It confirmed three of four
+criticals and all six highs as fixed, called two of the fixes structurally better than what
+was recommended, and filed nine remaining issues. Every claim spot-checked against the code
+held. The findings and their status:
+
+| ID | Severity | Finding | Status |
+|---|---|---|---|
+| R-1 | blocker | Settlement waits for an empty audit backlog while the closing pass audits at rate 1 and every replay is a full walk from the PRF start, so settling costs the same order of work as the entire search. Invisible at 56 bits, a second nineteen-day search at 131. | open, gating any funded round |
+| R-2 | high | Steady-state verification at 1/N of network throughput, executed by a single-threaded Python coordinator, puts the verifier ceiling about two orders of magnitude below one contributed GPU. | open, same root cause |
+| R-3 | medium | Sequential work identifiers were claimed in the README and in this log but never implemented. | fixed by deleting the claim; the dead `T_WINDOW`/`t_gaps` remain to be removed |
+| R-4 | medium | The site said audit entropy "does not exist while you are submitting"; in the default fallback the operator holds that secret from the moment the epoch opens. | fixed on the site, which now states both beacon modes and that a funded round requires the external one |
+| R-5 | medium | `postRoot` now carries the full leaf set, so operator gas scales with contributor count, contradicting the README. | claim corrected; decoupling the cheap per-epoch root from the single bound settle is a follow-up |
+| R-6 | medium | The site's residual-risk list still named the settlement denominator, which the contract now binds, and omitted the residual that actually survives: nothing on chain checks that a leaf corresponds to real work. | fixed on the site |
+| R-7 | medium | `recoverExcess` forwards a sponsor's mistaken bare transfer to the operator. | open |
+| R-8 | low | The calibration ladder stops at 40 bits, below the range where the fitted constant matters. | open |
+| R-9 | low | The evasive adversary tests the retired selector; `EcMath` assumes a prime modulus it does not check; deferred items are correctly deferred. | open |
+
+**The lesson worth keeping.** Both serious fixes were built on replaying a walk in full from
+its start, and the new settlement gate then required every payable point to be replayed. A
+full-walk replay costs what the walk cost, so exhaustive verification costs what the search
+cost. That silently retracts the project's own argument for sampled verification, which is a
+willingness to accept a bounded fraud probability in exchange for a bounded verifier cost.
+The test suite checks correctness and detection thoroughly and cost not at all, which is how
+a 2^20 cost regression shipped inside two well-executed security fixes. The single most
+valuable addition to this repository is an assertion that cumulative verification work stays
+below a fixed fraction of cumulative search work.

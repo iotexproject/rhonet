@@ -106,6 +106,8 @@ tbody tr:hover td{background:var(--raise)}
 .rk{font-family:var(--mono);color:var(--faint);width:3ch}
 .rk.top{color:var(--accent)}
 .who{font-family:var(--mono);font-size:13px}
+.who a{color:var(--accent);text-decoration:none}
+.who a:hover{text-decoration:underline}
 .sub2{display:block;font-family:var(--sans);font-size:12px;color:var(--faint);margin-top:3px;letter-spacing:0}
 .share{display:inline-flex;align-items:center;gap:9px;justify-content:flex-end}
 .meter{width:78px;height:5px;border-radius:3px;background:var(--line2);overflow:hidden;flex:none}
@@ -185,33 +187,38 @@ footer{margin-top:72px;padding-top:18px;border-top:1px solid var(--line);color:v
 </div>
 
 <section id="board">
-  <div class="shead"><h2>Leaderboard</h2><span class="rule"></span><span class="note">last completed round</span></div>
+  <div class="shead"><h2>Leaderboard</h2><span class="rule"></span><span class="note">last completed round · identities verified on github</span></div>
   <div class="panel">
     <div class="phead">
-      <h3>demo-p56 <span style="color:var(--faint);font-weight:400">· solved</span></h3>
-      <span class="sub">56-bit curve · collision at 72% of expected work · notional pool, no funds held</span>
+      <h3>public-demo <span style="color:var(--faint);font-weight:400">· solved</span></h3>
+      <span class="sub">48-bit curve · 11,401 points · 8 epochs · notional pool, no funds held</span>
     </div>
     <div class="tbl">
     <table>
       <thead><tr><th class="rk">#</th><th>Contributor</th><th class="r">Credits</th><th class="r">Share</th><th class="r">Pro-rata split</th><th class="r">Segments replayed</th></tr></thead>
       <tbody>
-        <tr><td class="rk top">01</td><td class="who">walker A <span class="sub2">3 worker processes</span></td><td class="r num">100.438</td>
-            <td class="r"><span class="share"><span class="meter"><i style="width:47.8%"></i></span><span class="num">47.8%</span></span></td>
-            <td class="r num">4,778.83</td><td class="r num">126 ✓</td></tr>
-        <tr><td class="rk">02</td><td class="who">walker B <span class="sub2">2 worker processes</span></td><td class="r num">74.344</td>
-            <td class="r"><span class="share"><span class="meter"><i style="width:35.4%"></i></span><span class="num">35.4%</span></span></td>
-            <td class="r num">3,537.28</td><td class="r num">93 ✓</td></tr>
-        <tr><td class="rk">03</td><td class="who">walker C <span class="sub2">1 worker process</span></td><td class="r num">35.391</td>
-            <td class="r"><span class="share"><span class="meter"><i style="width:16.8%"></i></span><span class="num">16.8%</span></span></td>
-            <td class="r num">1,683.89</td><td class="r num">56 ✓</td></tr>
-        <tr class="out"><td class="rk">—</td><td class="who">walker D <span class="tag">disqualified</span><span class="sub2">forged its points outright</span></td>
-            <td class="r num">0.000</td><td class="r"><span class="share"><span class="meter"></span><span class="num">0%</span></span></td><td class="r num">0.00</td><td class="r num">0 ✓</td></tr>
-        <tr class="out"><td class="rk">—</td><td class="who">walker E <span class="tag">disqualified</span><span class="sub2">forged, and filtered its work to dodge the audit</span></td>
-            <td class="r num">0.000</td><td class="r"><span class="share"><span class="meter"></span><span class="num">0%</span></span></td><td class="r num">0.00</td><td class="r num">0 ✓</td></tr>
+        <tr><td class="rk top">01</td>
+            <td class="who"><a href="https://github.com/raullenchai">raullenchai</a><span class="sub2">Apple M3 Ultra · 4 worker processes</span></td>
+            <td class="r num">19.000</td>
+            <td class="r"><span class="share"><span class="meter"><i style="width:100%"></i></span><span class="num">51.1%</span></span></td>
+            <td class="r num">5,110.00</td><td class="r num">4,863 ✓</td></tr>
+        <tr><td class="rk">02</td>
+            <td class="who"><a href="https://github.com/claude">claude</a><span class="sub2">Apple M3 Ultra · 2 worker processes</span></td>
+            <td class="r num">18.152</td>
+            <td class="r"><span class="share"><span class="meter"><i style="width:96%"></i></span><span class="num">48.9%</span></span></td>
+            <td class="r num">4,890.00</td><td class="r num">4,646 ✓</td></tr>
+        <tr class="out"><td class="rk">—</td>
+            <td class="who">unregistered key ae1e757e… <span class="tag">disqualified</span><span class="sub2">a point it submitted did not replay</span></td>
+            <td class="r num">0.000</td><td class="r"><span class="share"><span class="meter"></span><span class="num">0%</span></span></td>
+            <td class="r num">0.00</td><td class="r num">0 ✓</td></tr>
+        <tr class="out"><td class="rk">—</td>
+            <td class="who">unregistered key 612349ce… <span class="tag">disqualified</span><span class="sub2">forged, and filtered its work to dodge the audit</span></td>
+            <td class="r num">0.000</td><td class="r"><span class="share"><span class="meter"></span><span class="num">0%</span></span></td>
+            <td class="r num">0.00</td><td class="r num">0 ✓</td></tr>
       </tbody>
     </table>
     </div>
-    <div class="pfoot">Shares track the three honest contributors' process counts, 3 : 2 : 1. Both forgers were caught by the epoch audit and forfeited everything, including the one that tried to predict which of its work would be replayed. Credit accrues to whatever address a walker names; the demonstration uses placeholders rather than anyone's account. The work, the audit and the split are real. The pool is not: no contract has been deployed and nobody has been paid.</div>
+    <div class="pfoot">A real round on one machine. The two registered accounts are shown by their GitHub login because each opened a pull request binding that account to its key; the two forgers registered nothing, so they are shown as keys and never as somebody's account. Hardware is self-reported by the walker, not measured. The four contributors ran alongside the coordinator, whose end-of-round pass replayed every single point, so the split reflects contention for one machine rather than the process counts. Every epoch's audit is published and re-derived in CI: <a href="https://github.com/iotexproject/rhonet/tree/main/public/epochs">public/epochs</a>. The pool is notional; no contract has been deployed and nobody has been paid.</div>
   </div>
 </section>
 

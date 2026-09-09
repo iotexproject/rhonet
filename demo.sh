@@ -47,7 +47,9 @@ KS=$($PY -c "import json,sys; print(json.load(open(sys.argv[1]))['k'])" "$DEMO_D
 echo "solved k=$K  secret k=$KS  match=$([ "$K" = "$KS" ] && echo yes || echo NO)"
 [ "$K" = "$KS" ]
 echo "--- payouts"; curl -s "http://127.0.0.1:$PORT/api/status" | $PY -c "import json,sys; [print(f\"  {p['payout_addr']}  {p['credits']:8.3f} credits  {p['share']*100:5.1f}%  {p['usdc']:8.2f} USDC\") for p in json.load(sys.stdin)['solution']['payouts']]"
-echo "--- merkle proof for alice (latest epoch)"; curl -s "http://127.0.0.1:$PORT/api/proof?payout_addr=0x00000000000000000000000000000000000a11ce" | $PY -m json.tool | head -12
+echo "--- merkle proof for alice (latest payable epoch)"
+ALICE_EPOCH=$(curl -sf "http://127.0.0.1:$PORT/api/proof/epochs?payout_addr=0x00000000000000000000000000000000000a11ce" | $PY -c 'import json,sys; print(json.load(sys.stdin)[-1])')
+curl -s "http://127.0.0.1:$PORT/api/proof?payout_addr=0x00000000000000000000000000000000000a11ce&epoch=$ALICE_EPOCH" | $PY -m json.tool | head -12
 curl -sf "http://127.0.0.1:$PORT/api/status" | $PY -c '
 import json, sys
 s = json.load(sys.stdin)
@@ -56,5 +58,8 @@ payouts = s["solution"]["payouts"]
 assert s["slashed"] == 2, s
 assert {p["payout_addr"] for p in payouts} == expected, payouts
 assert all(p["credits"] > 0 for p in payouts), payouts
-print("PASS: three honest payouts; exactly two adversaries slashed")'
+print("PASS: three honest payouts; exactly two adversaries slashed")
+search = s["total_executed_steps"] - s["total_ticket_steps"]
+replayed = s["verification_replay_steps"]
+print(f"verification: {replayed} replay / {search} search = {replayed/search:.6%}")'
 echo "demo database: $DEMO_DIR/demo.sqlite"

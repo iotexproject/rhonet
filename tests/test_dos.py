@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from rhonet import ec, coordinator as module
+from protocol_helpers import Coordinator
 
 
 class DosTests(unittest.TestCase):
@@ -25,7 +26,7 @@ class DosTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.spec = ec.RoundSpec.load(str(Path(__file__).resolve().parents[1] / 'rounds/r32.json'))
-        self.coord = module.Coordinator(self.spec, str(Path(self.tmp.name) / 'dos.sqlite'))
+        self.coord = Coordinator(self.spec, str(Path(self.tmp.name) / 'dos.sqlite'))
         self.addCleanup(self.coord.db.close)
 
     def identity(self, seed):

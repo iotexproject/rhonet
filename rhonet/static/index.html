@@ -153,7 +153,7 @@ async function tick() {
   $("#epoch-health").textContent = `Epoch loop: ${s.degraded ? "DEGRADED" : "healthy"} — ${s.epoch_loop_failures} consecutive failures; ${s.dps_from_slashed} retained DPs from slashed identities`;
   $("#epoch-health").style.color = s.degraded ? "var(--bad)" : "var(--muted)";
   $("#status").textContent = s.status; $("#status").className = "pill " + s.status;
-  $("#curve").textContent = `${R.bits}-bit prime-order curve · Pollard rho, r=${R.r} adding walk · DP = ${R.w} trailing zero bits · 1 credit = 2^${R.credit_unit_log2} steps · prize ${R.prize_pool_usdc.toLocaleString()} USDC`;
+  $("#curve").textContent = `${R.bits}-bit prime-order curve · Pollard rho, r=${R.r} adding walk · DP = ${R.w} trailing zero bits · 1 credit = 2^${R.credit_unit_log2} steps · audit 1 in ${R.spot_check_rate}, ${(s.detection ? s.detection.segments_per_walk : "?")} segments/walk · beacon: ${s.beacon_mode} · prize ${R.prize_pool_usdc.toLocaleString()} USDC`;
 
   const pct = s.progress_executed * 100;
   $("#pct").textContent = pct.toFixed(1) + "%";

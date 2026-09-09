@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from rhonet import ec, merkle
 from rhonet.coordinator import Coordinator, build_app
+from protocol_helpers import Coordinator
 
 
 class EpochTests(unittest.TestCase):
@@ -74,7 +75,7 @@ class EpochTests(unittest.TestCase):
         self.coord.close_epoch()
         self.assertEqual(self.coord.db.execute('SELECT COUNT(*) FROM epochs WHERE audit_complete=1').fetchone()[0], len(rows))
 
-    def test_departed_miner_and_cumulative_balances(self):
+    def test_departed_miner_has_final_per_epoch_payments(self):
         a_pk, b_pk = 'ab' * 32, 'cd' * 32
         self.admit(a_pk, self.a)
         self.admit(b_pk, self.b)
@@ -87,14 +88,14 @@ class EpochTests(unittest.TestCase):
             self.coord.close_epoch()
             balances.append(self.coord.proof(self.b)['credited_steps'])
         self.assertEqual(balances, sorted(balances))
-        self.assertEqual(balances, [(i + 1) * (1 << self.spec.w) for i in range(5)])
-        latest = self.coord.proof(self.a.upper())
+        self.assertEqual(balances, [1 << self.spec.w for i in range(5)])
+        latest = self.coord.proof(self.a.upper(), 1)
         historic = self.coord.proof(self.a, epoch=1)
-        self.verify(latest, 4)
+        self.verify(latest, 1)
         self.verify(historic, 1)
-        self.assertEqual(latest['credited_steps'], 2 * (1 << self.spec.w))
+        self.assertEqual(latest['credited_steps'], 1 << self.spec.w)
         self.assertEqual(latest['credited_steps'], historic['credited_steps'])
-        self.assertEqual(self.coord.epochs_for(self.a.upper()), list(range(5)))
+        self.assertEqual(self.coord.epochs_for(self.a.upper()), [0, 1])
 
     def test_unclosed_epoch_and_unknown_address(self):
         with self.assertRaises(HTTPException) as exc:

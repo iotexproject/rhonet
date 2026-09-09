@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from fastapi.testclient import TestClient
 from rhonet import ec, merkle
 from rhonet.coordinator import Coordinator, build_app
+from protocol_helpers import Coordinator
 
 
 class BeaconTests(unittest.TestCase):
@@ -54,7 +55,7 @@ class BeaconTests(unittest.TestCase):
         self.clock.return_value = self.coord.started_at + epoch * self.spec.epoch_seconds + 1
         self.coord.close_epoch()
 
-    def test_delayed_catches_primary_miss(self):
+    def test_sampled_miss_is_bounded_risk_and_mature_payment_is_final(self):
         self.admit(self.coord)
         root = merkle.build([])[0]
         beacon = self.coord.beacon_for(0)
@@ -75,10 +76,12 @@ class BeaconTests(unittest.TestCase):
         self.assertEqual(self.coord.miners_view()[0]['status'], 'active')
         self.assertEqual(self.coord.db.execute('SELECT checked FROM dps WHERE t=?', (dp['t'],)).fetchone(), (0,))
         self.advance(2)
-        self.assertEqual(self.coord.miners_view()[0]['status'], 'slashed')
-        self.assertIsNone(self.coord.db.execute('SELECT 1 FROM dps WHERE pubkey=? AND t=?', (self.pk, dp['t'])).fetchone())
-        delayed = [e['detail'] for e in self.coord.events_view() if e['kind'] == 'delayed_audit']
-        self.assertTrue(any(e['failed'] == 1 for e in delayed))
+        self.assertEqual(self.coord.miners_view()[0]['status'], 'active')
+        self.assertEqual(self.coord.proof(self.addr, 0)['credited_steps'], 2 << self.spec.w)
+        # Known entropy permits mixing honest selected points with unselected
+        # forgeries. Sampling fixes count, not unpredictability; do not claim
+        # that this strategy must be slashed.
+        self.assertEqual(self.coord.status_view()['operator_collusion_fraud_bound'], 1.0)
 
     def test_dominant_miner_root_prediction_attack(self):
         count = 256
@@ -144,12 +147,12 @@ class BeaconTests(unittest.TestCase):
                 seen.add(dp['x'])
                 self.assertEqual(self.coord.submit(self.pk, [dp])['accepted'], 1)
         actual = []
-        original_verify = ec.dp_verify
-        def verify(spec, table, pk, dp):
-            self.assertIsNone(next(e for e in client.get('/api/epochs').json() if e['idx'] == 0)['beacon_reveal'])
+        original_verify = ec.verify_segment
+        def verify(spec, table, pk, dp, segment, opening):
+            self.assertIsNotNone(next(e for e in client.get('/api/epochs').json() if e['idx'] == 0)['beacon_reveal'])
             actual.append((pk, dp['t']))
-            return original_verify(spec, table, pk, dp)
-        with patch.object(ec, 'dp_verify', side_effect=verify):
+            return original_verify(spec, table, pk, dp, segment, opening)
+        with patch.object(ec, 'verify_segment', side_effect=verify):
             self.advance(1)
         closed = next(e for e in client.get('/api/epochs').json() if e['idx'] == 0)
         self.assertEqual(ec.H(bytes.fromhex(closed['beacon_reveal'])).hex(), opened['beacon_commitment'])
@@ -164,9 +167,9 @@ class BeaconTests(unittest.TestCase):
                 ranked = [oldest] + [r for r in ranked if r != oldest]
             expected.extend((pk, t) for _, pk, t in ranked[:count])
             published.extend(tuple(pair) for pair in detail['audit_inputs'][tag]['pairs'])
-        self.assertEqual(actual, published)
+        self.assertCountEqual(actual, published)
         self.assertTrue(actual)
-        self.assertEqual(actual, expected)
+        self.assertCountEqual(actual, expected)
         self.assertTrue(closed['audit_complete'])
         restarted = self.make_coord('fixed')
         self.assertEqual(restarted.beacon_for(0).hex(), closed['beacon_reveal'])

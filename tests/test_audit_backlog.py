@@ -10,6 +10,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from fastapi.testclient import TestClient
 from rhonet import coordinator as module, ec, walker
+from protocol_helpers import Coordinator
 
 
 class BacklogTests(unittest.TestCase):
@@ -19,7 +20,7 @@ class BacklogTests(unittest.TestCase):
         base = ec.RoundSpec.load(str(Path(__file__).resolve().parents[1] / 'rounds/r32.json'))
         self.spec = dataclasses.replace(base, w=4, ticket_d=5, max_walk_len_log2=10)
         self.path = str(Path(self.tmp.name) / 'backlog.sqlite')
-        self.coord = module.Coordinator(self.spec, self.path)
+        self.coord = Coordinator(self.spec, self.path)
         self.addCleanup(self.coord.db.close)
         self.clock = patch.object(module, 'now', return_value=self.coord.started_at + 1).start()
         self.addCleanup(patch.stopall)
@@ -52,7 +53,7 @@ class BacklogTests(unittest.TestCase):
             self.assertFalse(ec.dp_verify(self.spec, self.coord.table, pk, dp))
             self.assertEqual(self.coord.submit(pk, [dp])['accepted'], 1)
         self.assertEqual(len(self.coord.status_view()['audit_backlog_by_identity']), 200)
-        with patch.object(ec, 'dp_verify', wraps=ec.dp_verify) as verify:
+        with patch.object(ec, 'verify_segment', wraps=ec.verify_segment) as verify:
             self.advance(1)
         self.assertEqual(verify.call_count, 200)
         self.assertEqual(self.coord.db.execute("SELECT COUNT(*) FROM miners WHERE status='slashed' AND credited_steps=0").fetchone()[0], 200)
@@ -89,7 +90,7 @@ class BacklogTests(unittest.TestCase):
             status = client.get('/api/status').json()
             self.assertEqual(status['audit_backlog_by_identity'][pk], 4 * (1 << self.spec.w))
             self.assertEqual(status['audit_backlog_limit_steps'], 4 * (1 << self.spec.w))
-            restarted = module.Coordinator(self.spec, self.path)
+            restarted = Coordinator(self.spec, self.path)
             try:
                 self.assertEqual(restarted.status_view()['audit_backlog_steps'], status['audit_backlog_steps'])
                 self.assertEqual(restarted.submit(pk, [batch[4]])['accepted'], 0)
@@ -97,7 +98,7 @@ class BacklogTests(unittest.TestCase):
                 restarted.db.close()
             for epoch in range(1, 5):
                 self.advance(epoch)
-                self.assertEqual(self.coord.status_view()['audit_backlog_steps'], max(0, 3 - epoch) * (1 << self.spec.w))
+                self.assertEqual(self.coord.status_view()['audit_backlog_steps'], 0)
             self.assertEqual(self.coord.submit(pk, [batch[4]])['accepted'], 1)
             self.assertEqual(self.coord.miners_view()[0]['status'], 'active')
 
@@ -118,7 +119,7 @@ class BacklogTests(unittest.TestCase):
                 self.assertLessEqual(self.coord.status_view()['audit_backlog_steps'], 16 << self.spec.w)
                 pending = walker.retain_deferred(pending, pending, result)
                 self.assertEqual(self.coord.miners_view()[0]['status'], 'active')
-                self.assertEqual(self.coord.db.execute('SELECT t_gaps FROM miners').fetchone()[0], 0)
+                self.assertNotIn('t_gaps', {r[1] for r in self.coord.db.execute('PRAGMA table_info(miners)')})
                 if not pending:
                     break
                 self.advance(epoch)
@@ -134,7 +135,7 @@ class BacklogTests(unittest.TestCase):
         with patch.object(self.coord, 'quota', return_value=0):
             result = self.coord.submit(pk, batch)
         self.assertEqual(result['retry_indices'], list(range(5)))
-        self.assertEqual(self.coord.db.execute('SELECT next_t,t_gaps FROM miners').fetchone(), (0, 0))
+        self.assertEqual(self.coord.db.execute('SELECT next_t FROM miners').fetchone(), (0,))
         with patch.object(module, 'MAX_AUDIT_BACKLOG_DPS', 4):
             self.coord.submit(pk, batch)
             self.coord.db.execute('UPDATE dps SET checked=1 WHERE t=?', (batch[0]['t'],))
@@ -149,7 +150,7 @@ class BacklogTests(unittest.TestCase):
 
     def test_restart_with_wrong_round_refuses_to_replay_or_slash(self):
         with self.assertRaisesRegex(ValueError, 'different round'):
-            module.Coordinator(dataclasses.replace(self.spec, round_id='wrong-round'), self.path)
+            Coordinator(dataclasses.replace(self.spec, round_id='wrong-round'), self.path)
 
     def test_delayed_oldest_row_cannot_be_starved_by_fresh_submissions(self):
         # Even an adversary choosing new hash ranks cannot displace the oldest slot.

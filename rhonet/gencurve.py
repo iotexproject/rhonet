@@ -125,6 +125,8 @@ def main(argv=None):
     ap.add_argument("--bits", type=int, default=44)
     ap.add_argument("--round-id", default=None)
     ap.add_argument("--w", type=int, default=None, help="DP bits (default: bits//4)")
+    ap.add_argument("--v", type=int, default=None)
+    ap.add_argument("--funded", action="store_true")
     ap.add_argument("--r", type=int, default=128)
     ap.add_argument("--ticket-d", type=int, default=None, help="ticket difficulty bits (default: w+4)")
     ap.add_argument("--credit-unit-log2", type=int, default=20)
@@ -137,6 +139,9 @@ def main(argv=None):
 
     w = args.w if args.w is not None else max(6, args.bits // 4)
     d = args.ticket_d if args.ticket_d is not None else w + 4
+    v = args.v if args.v is not None else min(12, max(1, w - 6))
+    if not 1 <= v <= w:
+        sys.exit("--v must satisfy 1 <= v <= --w")
     if w < 1:
         sys.exit("--w must be >= 1")
     if d <= w:
@@ -163,6 +168,8 @@ def main(argv=None):
         "qy": Q[1],
         "bits": args.bits,
         "w": w,
+        "v": v,
+        "funded": args.funded,
         "r": args.r,
         "ticket_d": d,
         "credit_unit_log2": args.credit_unit_log2,

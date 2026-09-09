@@ -14,6 +14,7 @@ from fastapi import HTTPException
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from rhonet import ec
 from rhonet.coordinator import Coordinator
+from protocol_helpers import Coordinator
 
 
 class CollisionTests(unittest.TestCase):
@@ -124,16 +125,17 @@ class CollisionTests(unittest.TestCase):
         self.store(self.partner, self.p, checked=1)
         self.coord.started_at -= self.spec.epoch_seconds
         entered, release, collided = threading.Event(), threading.Event(), threading.Event()
-        original = ec.dp_verify
-        def verify(spec, table, pk, dp):
+        ec_verify = ec.dp_verify
+        original = ec.verify_segment
+        def verify(spec, table, pk, dp, segment, opening):
             if pk == self.evil:
                 entered.set()
                 if not release.wait(10):
                     raise RuntimeError('audit release timeout')
             if pk == self.honest:
                 collided.set()
-            return original(spec, table, pk, dp)
-        with patch.object(ec, 'dp_verify', side_effect=verify), concurrent.futures.ThreadPoolExecutor(2) as pool:
+            return original(spec, table, pk, dp, segment, opening)
+        with patch.object(ec, 'verify_segment', side_effect=verify), patch.object(ec, 'dp_verify', side_effect=lambda *a: (collided.set() or ec_verify(*a))), concurrent.futures.ThreadPoolExecutor(2) as pool:
             audit = pool.submit(self.coord.close_epoch)
             try:
                 self.assertTrue(entered.wait(5))

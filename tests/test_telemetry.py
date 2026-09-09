@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from rhonet import ec, walker
 from rhonet.coordinator import Coordinator, MAX_TELEMETRY_PER_SUBMISSION, SCHEMA
+from protocol_helpers import Coordinator
 
 
 class TelemetryTests(unittest.TestCase):
@@ -134,7 +135,7 @@ class TelemetryTests(unittest.TestCase):
 
     def test_parent_submits_signed_deltas_even_without_dps(self):
         client, ctx = Mock(), Mock()
-        client.get.side_effect = lambda url: Mock(json=lambda: self.spec.to_dict() if url == "/api/round" else {"epoch": 0})
+        client.get.side_effect = lambda url, **kwargs: Mock(json=lambda: [] if url == "/api/audit/targets" else self.spec.to_dict() if url == "/api/round" else {"epoch": 0, "status": "open"})
         ok = Mock(status_code=200)
         ok.json.return_value = {'accepted': 0, 'epoch': 0}
         done = Mock(status_code=200)

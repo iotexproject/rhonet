@@ -18,6 +18,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from rhonet import coordinator as module, ec, walker
+from protocol_helpers import Coordinator
 
 
 class AdmissionTests(unittest.TestCase):
@@ -25,7 +26,7 @@ class AdmissionTests(unittest.TestCase):
     def server(self):
         with tempfile.TemporaryDirectory() as tmp:
             spec = ec.RoundSpec.load(str(Path(__file__).resolve().parents[1] / 'rounds/r32.json'))
-            coord = module.Coordinator(spec, str(Path(tmp) / 'admission.sqlite'))
+            coord = Coordinator(spec, str(Path(tmp) / 'admission.sqlite'))
             sock = socket.socket()
             sock.bind(('127.0.0.1', 0))
             server = uvicorn.Server(uvicorn.Config(module.build_app(coord), log_level='error'))
@@ -139,7 +140,7 @@ class AdmissionTests(unittest.TestCase):
     def check_submit_retention(self, exhaust):
         spec = ec.RoundSpec.load(str(Path(__file__).resolve().parents[1] / 'rounds/r32.json'))
         client = Mock()
-        client.get.side_effect = lambda path: httpx.Response(200, json=spec.to_dict() if path == '/api/round' else {'epoch': 0})
+        client.get.side_effect = lambda path, **kwargs: httpx.Response(200, json=[] if path == "/api/audit/targets" else spec.to_dict() if path == '/api/round' else {'epoch': 0, 'status': 'open'})
         submitted = []
         def post(path, json):
             if path == '/api/ticket':
@@ -170,7 +171,7 @@ class AdmissionTests(unittest.TestCase):
     def test_partial_capacity_response_retries_original_points_in_order(self):
         spec = ec.RoundSpec.load(str(Path(__file__).resolve().parents[1] / 'rounds/r32.json'))
         client, ctx = Mock(), Mock()
-        client.get.side_effect = lambda path: httpx.Response(200, json=spec.to_dict() if path == '/api/round' else {'epoch': 0})
+        client.get.side_effect = lambda path, **kwargs: httpx.Response(200, json=[] if path == "/api/audit/targets" else spec.to_dict() if path == '/api/round' else {'epoch': 0, 'status': 'open'})
         submitted = []
         def post(path, json):
             if path == '/api/ticket':

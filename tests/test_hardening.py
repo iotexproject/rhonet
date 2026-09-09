@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from rhonet import coordinator as module, ec, walker
+from protocol_helpers import Coordinator
 
 
 class HardeningTests(unittest.TestCase):
@@ -21,7 +22,7 @@ class HardeningTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.spec = ec.RoundSpec.load(str(Path(__file__).resolve().parents[1] / 'rounds/r32.json'))
         self.path = str(Path(self.tmp.name) / 'hardening.sqlite')
-        self.coord = module.Coordinator(self.spec, self.path)
+        self.coord = Coordinator(self.spec, self.path)
         self.addCleanup(self.coord.db.close)
         self.key = Ed25519PrivateKey.from_private_bytes(bytes([42]) * 32)
         self.pk = walker.pubkey_hex(self.key)
@@ -65,7 +66,7 @@ class HardeningTests(unittest.TestCase):
         stale = walker.signed(self.key, stale)
         response = client.post('/api/submit', json=stale)
         self.assertEqual((response.status_code, response.json()['detail']), (400, 'stale submission'))
-        other = module.Coordinator(self.spec, self.path)
+        other = Coordinator(self.spec, self.path)
         try:
             self.assertEqual(other.db.execute('SELECT last_seq FROM miners').fetchone()[0], 10)
             with self.assertRaises(HTTPException) as exc:
@@ -111,7 +112,8 @@ class HardeningTests(unittest.TestCase):
             self.assertFalse(module.valid_payout_addr(address))
         self.assertTrue(module.valid_payout_addr(self.addr))
         self.admit()
-        self.coord.db.execute('UPDATE miners SET credited_steps=100')
+        self.coord.db.execute('UPDATE miners SET credited_steps=256')
+        self.coord.db.execute("INSERT INTO dps(pubkey,t,x,y,a,b,steps,ts,epoch,checked) VALUES(?,0,'0','0','0','0',1,0,0,1)", (self.pk,))
         self.coord.db.commit()
         self.coord.started_at -= self.spec.epoch_seconds
         self.coord.close_epoch()
@@ -119,7 +121,7 @@ class HardeningTests(unittest.TestCase):
         result = self.coord.rotate(self.body(payout_addr=new))
         self.assertEqual(result['payout_addr'], new)
         self.assertEqual(self.coord.miners_view()[0]['payout_addr'], new)
-        self.assertEqual(self.coord.proof(self.addr, 0)['credited_steps'], 100)
+        self.assertEqual(self.coord.proof(self.addr, 0)['credited_steps'], 256)
         event = next(e for e in self.coord.events_view() if e['kind'] == 'payout_rotated')
         self.assertEqual((event['detail']['old'], event['detail']['new']), (self.addr, new))
         self.coord._slash(self.pk, 'test')
@@ -148,11 +150,12 @@ class HardeningTests(unittest.TestCase):
             [(self.pk, t, '0', '0', '0', '0', 1, 0, 0) for t in range(3)])
         self.coord.db.commit()
         with patch.object(self.spec, 'spot_check_rate', 1), patch.object(ec, 'H', return_value=bytes(32)), \
-                patch.object(ec, 'dp_verify', side_effect=lambda spec, table, pk, dp: dp['t'] != 1):
+                patch.object(ec, 'verify_segment', side_effect=lambda spec, table, pk, dp, seg, opening: (dp['t'] != 1, 1)):
             self.coord.audit_epoch(0, b'root')
+            self.coord.respond()
         self.assertEqual(self.coord.db.execute('SELECT t,slashed FROM dps ORDER BY t').fetchall(),
-                         [(0, 1), (2, 1)])
-        self.assertEqual(self.coord.status_view()['dps_from_slashed'], 2)
+                         [(0, 1), (1, 1), (2, 1)])
+        self.assertEqual(self.coord.status_view()['dps_from_slashed'], 3)
 
     def test_epoch_loop_degradation_and_recovery(self):
         stop = Mock()

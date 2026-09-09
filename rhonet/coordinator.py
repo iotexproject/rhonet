@@ -11,7 +11,7 @@ Responsibilities, in the order a DP passes through them:
 The epoch root alone is insufficient when one participant dominates: that miner
 can predict its balance and root before submitting. A post-seal external beacon,
 or the single operator's private commit-then-reveal secret, closes that gap.
-The fallback trusts the operator to keep its secret private until audits finish;
+The fallback trusts the operator to keep its secret private until the batch is sealed;
 it does not protect against an operator colluding with miners.
 
 State lives in one sqlite file; the coordinator can be restarted at any time.
@@ -19,6 +19,8 @@ State lives in one sqlite file; the coordinator can be restarted at any time.
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
+import multiprocessing
 import json
 import math
 import os
@@ -28,7 +30,7 @@ import sqlite3
 import threading
 import time
 from contextlib import contextmanager
-from collections import deque
+from collections import Counter, deque
 from functools import wraps
 
 from cryptography.exceptions import InvalidSignature
@@ -38,7 +40,6 @@ from fastapi.responses import FileResponse, JSONResponse
 
 from . import ec, merkle
 
-T_WINDOW = 4096
 MAX_AUDIT_BACKLOG_DPS = 4096
 MAX_TELEMETRY_PER_SUBMISSION = 1 << 40
 
@@ -95,6 +96,27 @@ class TicketGate:
 TICKET_GATE = TicketGate(TICKET_CONCURRENCY, TICKET_QUEUE, TICKET_WAIT_SECONDS)
 
 
+AUDIT_WORKERS = max(1, _env_num("RHONET_AUDIT_PROCESSES", min(4, os.cpu_count() or 1), int))
+AUDIT_GATE = TicketGate(AUDIT_WORKERS, 64, 30)
+_AUDIT_POOL = None
+_AUDIT_POOL_LOCK = threading.Lock()
+
+
+def run_audit_job(spec, table, pubkey, dp, segment, opening):
+    started = time.monotonic()
+    ok, steps = ec.verify_segment(spec, table, pubkey, dp, segment, opening)
+    return ok, steps, time.monotonic()-started, os.getpid()
+
+
+def audit_pool():
+    global _AUDIT_POOL
+    with _AUDIT_POOL_LOCK:
+        if _AUDIT_POOL is None:
+            _AUDIT_POOL = concurrent.futures.ProcessPoolExecutor(
+                max_workers=AUDIT_WORKERS, mp_context=multiprocessing.get_context("spawn"))
+        return _AUDIT_POOL
+
+
 class RateLimiter:
     """Thread-safe token buckets; idle, fully refilled buckets are discarded."""
     def __init__(self, rate_per_sec, burst):
@@ -136,7 +158,7 @@ CREATE TABLE IF NOT EXISTS miners (
   credited_steps INTEGER NOT NULL DEFAULT 0, spot_checks INTEGER NOT NULL DEFAULT 0,
   spot_fails INTEGER NOT NULL DEFAULT 0, rejected INTEGER NOT NULL DEFAULT 0,
   epoch_dps INTEGER NOT NULL DEFAULT 0, epoch_dps_epoch INTEGER NOT NULL DEFAULT -1,
-  next_t INTEGER NOT NULL DEFAULT 0, t_gaps INTEGER NOT NULL DEFAULT 0,
+  next_t INTEGER NOT NULL DEFAULT 0,
   executed_steps INTEGER NOT NULL DEFAULT 0,
   abandoned_walks INTEGER NOT NULL DEFAULT 0,
   ticket_steps INTEGER NOT NULL DEFAULT 0,
@@ -171,6 +193,27 @@ CREATE TABLE IF NOT EXISTS epochs (
   beacon_commitment TEXT, beacon_reveal TEXT, beacon_source TEXT, audit_inputs TEXT, audit_counts TEXT NOT NULL DEFAULT '{}',
   audit_complete INTEGER NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS checkpoints (
+  pubkey TEXT NOT NULL, t INTEGER NOT NULL, root TEXT NOT NULL,
+  PRIMARY KEY(pubkey,t)
+);
+CREATE TABLE IF NOT EXISTS withheld (
+  epoch INTEGER NOT NULL, pubkey TEXT NOT NULL, steps INTEGER NOT NULL,
+  PRIMARY KEY (epoch, pubkey)
+);
+CREATE TABLE IF NOT EXISTS challenges (
+  epoch INTEGER NOT NULL, pubkey TEXT NOT NULL, t INTEGER NOT NULL,
+  segment INTEGER NOT NULL, deadline REAL NOT NULL, result TEXT,
+  PRIMARY KEY(epoch,pubkey,t)
+);
+CREATE TABLE IF NOT EXISTS audit_openings (
+  epoch INTEGER NOT NULL, pubkey TEXT NOT NULL, t INTEGER NOT NULL, opening TEXT NOT NULL,
+  PRIMARY KEY(epoch,pubkey,t)
+);
+CREATE TABLE IF NOT EXISTS epoch_payments (
+  epoch INTEGER NOT NULL, pubkey TEXT NOT NULL, payout_addr TEXT NOT NULL,
+  steps INTEGER NOT NULL, PRIMARY KEY(epoch,pubkey)
+);
 CREATE TABLE IF NOT EXISTS events (
   id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL NOT NULL, kind TEXT NOT NULL, detail TEXT NOT NULL
 );
@@ -182,7 +225,7 @@ def migrate_schema(db):
     """Upgrade existing tables before SCHEMA creates indexes on new columns."""
     for table, column, default in (("dps", "epoch", -1), ("dps", "slashed", 0),
                                    ("miners", "last_seq", -1), ("miners", "next_t", 0),
-                                   ("miners", "t_gaps", 0), ("miners", "executed_steps", 0),
+                                   ("miners", "executed_steps", 0),
                                    ("miners", "abandoned_walks", 0), ("miners", "ticket_steps", 0)):
         try:
             db.execute(f"ALTER TABLE {table} ADD COLUMN {column} INTEGER NOT NULL DEFAULT {default}")
@@ -191,6 +234,8 @@ def migrate_schema(db):
                 raise
     # A named column stays stable across VACUUM, unlike an implicit rowid.
     columns = {row[1] for row in db.execute("PRAGMA table_info(miners)")}
+    if "t_gaps" in columns:
+        db.execute("ALTER TABLE miners DROP COLUMN t_gaps")
     if columns and "miner_idx" not in columns:
         db.execute("ALTER TABLE miners ADD COLUMN miner_idx INTEGER")
     if columns:
@@ -223,6 +268,9 @@ def now() -> float:
 class Coordinator:
     def __init__(self, spec: ec.RoundSpec, db_path: str):
         spec.validate()
+        self.beacon_url = os.environ.get("RHONET_BEACON_URL", "")
+        if spec.funded and not self.beacon_url:
+            raise ValueError("funded round requires RHONET_BEACON_URL")
         self.spec = spec
         self.table = ec.walk_table(spec)
         # One shared sqlite connection remains; short DB sections use this lock.
@@ -236,6 +284,8 @@ class Coordinator:
         self.db.executescript(SCHEMA)
         fingerprint = spec.to_dict()
         previous_spec = self._get_state("round_spec")
+        if previous_spec is not None:
+            previous_spec = ec.RoundSpec.from_dict(previous_spec).to_dict()
         if previous_spec is not None and previous_spec != fingerprint:
             self.db.close()
             raise ValueError("database belongs to a different round specification")
@@ -247,7 +297,6 @@ class Coordinator:
         self._last_epoch_error = float("-inf")
         self.db.execute("UPDATE dps SET slashed=1 WHERE pubkey IN (SELECT pubkey FROM miners WHERE status='slashed')")
         self.db.commit()
-        self.beacon_url = os.environ.get("RHONET_BEACON_URL", "")
         self.registry_dir = os.environ.get("RHONET_REGISTRY", os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "contributors"))
         self.registry = {}
@@ -312,7 +361,7 @@ class Coordinator:
         as plain text, a JSON string, or {"hash": "0x..."}. Production must bind
         this to an external event after the sealed batch commitment, unknown at seal time.
         {root} is the sealed batch commitment, never the payment root.
-        Fetch only after sealing. The fallback secret is revealed after auditing.
+        Fetch only after sealing. Publish the reveal with the durable challenge plan.
         """
         with self.beacon_lock:
             return self._beacon_for(epoch)
@@ -476,7 +525,13 @@ class Coordinator:
                 rejected.append((i, "not a distinguished point")); continue
             if not spec.curve.on_curve((x, y)):
                 rejected.append((i, "not on curve")); continue
-            validated.append((i, dict(x=x, y=y, a=a, b=b, t=t, steps=steps)))
+            root = dp.get("checkpoint_root")
+            try:
+                if not isinstance(root, str) or len(root) != 64 or len(bytes.fromhex(root)) != 32:
+                    raise ValueError()
+            except ValueError:
+                rejected.append((i, "missing or invalid checkpoint commitment")); continue
+            validated.append((i, dict(x=x, y=y, a=a, b=b, t=t, steps=steps, checkpoint_root=root)))
         with self.lock:
             if freshness is not None:
                 self._check_freshness(pubkey, freshness)
@@ -484,11 +539,11 @@ class Coordinator:
                 self._accept_seq(pubkey, freshness)
                 return {"accepted": 0, "rejected": [], "status": self.status, "solved": self._get_state("solution")}
             m = self.db.execute(
-                "SELECT status, admitted_epoch, epoch_dps, epoch_dps_epoch, next_t, t_gaps FROM miners WHERE pubkey=?", (pubkey,)
+                "SELECT status, admitted_epoch, epoch_dps, epoch_dps_epoch, next_t FROM miners WHERE pubkey=?", (pubkey,)
             ).fetchone()
             if not m:
                 raise HTTPException(403, "no ticket for this identity")
-            status, admitted_epoch, epoch_dps, epoch_dps_epoch, next_t, t_gaps = m
+            status, admitted_epoch, epoch_dps, epoch_dps_epoch, next_t = m
             if status == "slashed":
                 raise HTTPException(403, "identity slashed")
             self._accept_seq(pubkey, freshness)
@@ -498,7 +553,7 @@ class Coordinator:
             q = self.quota(admitted_epoch)
 
             backlog = self.db.execute(
-                "SELECT COUNT(*) FROM dps WHERE pubkey=? AND checked=0 AND slashed=0", (pubkey,)).fetchone()[0]
+                "SELECT COUNT(*) FROM dps WHERE pubkey=? AND checked=0 AND slashed=0 AND epoch NOT IN (SELECT idx FROM epochs WHERE audit_complete=1)", (pubkey,)).fetchone()[0]
             paused = bool(self._get_state(f"intake_paused:{pubkey}"))
             if paused and backlog <= MAX_AUDIT_BACKLOG_DPS // 2:
                 paused = False
@@ -523,6 +578,9 @@ class Coordinator:
                     "INSERT INTO dps(x, y, a, b, pubkey, t, steps, ts, checked, epoch) VALUES(?,?,?,?,?,?,?,?,?,?)",
                     (str(x), str(y), str(a), str(b), pubkey, t, steps, now(), 0, ep),
                 )
+                self.db.execute("INSERT INTO checkpoints VALUES(?,?,?)", (pubkey, t, dp["checkpoint_root"]))
+                # Arbitrary identifiers are safe: each identity owes ceil(k/N)
+                # challenges regardless of which identifiers it chooses.
                 # Never retire missing identifiers: workers finish out of order,
                 # abandon walks, and retry capacity-deferred work. The database
                 # primary key supplies deduplication without an in-memory window.
@@ -538,8 +596,8 @@ class Coordinator:
                     # Collision replay stays locked to preserve atomic resolution;
                     # a successful collision is a once-per-round event.
                     # Never trust a stored row's checked flag for a collision.
-                    ok_new = ec.dp_verify(spec, self.table, pubkey, dp)
-                    ok_prior = ec.dp_verify(spec, self.table, ppk, other)
+                    ok_new = self._full_verify(pubkey, dp)
+                    ok_prior = self._full_verify(ppk, other)
                     if not ok_new or not ok_prior:
                         failures = []
                         for pk, segment, ok in ((pubkey, dp, ok_new), (ppk, other, ok_prior)):
@@ -587,9 +645,9 @@ class Coordinator:
 
             self.db.execute(
                 "UPDATE miners SET dps=dps+?, credited_steps=credited_steps+?, spot_checks=spot_checks+?, rejected=rejected+?, "
-                "epoch_dps=?, epoch_dps_epoch=?, last_seen=?, next_t=?, t_gaps=?, "
+                "epoch_dps=?, epoch_dps_epoch=?, last_seen=?, next_t=?, "
                 "executed_steps=executed_steps+?, abandoned_walks=abandoned_walks+? WHERE pubkey=?",
-                (accepted, credited, checked, len(rejected), epoch_dps, epoch_dps_epoch, now(), next_t, t_gaps, executed, abandoned, pubkey),
+                (accepted, credited, checked, len(rejected), epoch_dps, epoch_dps_epoch, now(), next_t, executed, abandoned, pubkey),
             )
             self.db.commit()
             self.rate_window.append((now(), executed))
@@ -615,6 +673,8 @@ class Coordinator:
         steps = int(dp["steps"])
         result = (ec.replay(self.spec, self.table, *start, steps)
                   if 0 < steps <= ec.MAX_REPLAY_STEPS(self.spec) else None)
+        if result is not None:
+            self._count_replay(steps)
         replayed = dict.fromkeys(("a", "b", "x", "y"), "None")
         if result is not None:
             a, b, point = result
@@ -626,11 +686,13 @@ class Coordinator:
 
     @db_locked
     def _slash(self, pubkey: str, why: str, detail=None):
+        if self.db.execute("SELECT status FROM miners WHERE pubkey=?", (pubkey,)).fetchone() == ("slashed",):
+            return
         # Retain slashed identities' DPs to advance honest search, but mark them
         # untrusted. C-2 replays both collision sides; failed replay rows are deleted.
-        # Slashing still forfeits all credit, including previously verified work.
+        # Only pending credit can be forfeited. epoch_payments is immutable.
         self.db.execute("UPDATE dps SET slashed=1 WHERE pubkey=?", (pubkey,))
-        self.db.execute("UPDATE miners SET status='slashed', spot_fails=spot_fails+1, credited_steps=0, note=? WHERE pubkey=?", (why, pubkey))
+        self.db.execute("UPDATE miners SET status='slashed', spot_fails=spot_fails+1, credited_steps=COALESCE((SELECT SUM(steps) FROM epoch_payments WHERE pubkey=miners.pubkey),0), note=? WHERE pubkey=?", (why, pubkey))
         self.db.commit()
         self.event("slashed", {"pubkey": pubkey[:16], "why": why, **(detail or {})})
 
@@ -646,11 +708,13 @@ class Coordinator:
             return self._finalize_solution(k, finder, partner, x)
 
     def _finalize_solution(self, k, finder, partner, x):
-        if self._audit_backlogs():
-            raise RuntimeError("settlement has unreplayed payable work")
+        end = self._get_state("settlement_epoch")
+        if end is None or self.db.execute("SELECT 1 FROM epochs WHERE idx<=? AND audit_complete=0", (end,)).fetchone():
+            return None
         spec = self.spec
-        total = self.db.execute("SELECT COALESCE(SUM(credited_steps),0) FROM miners WHERE status='active'").fetchone()[0]
-        rows = self.db.execute("SELECT pubkey, payout_addr, credited_steps FROM miners WHERE status='active' AND credited_steps>0").fetchall()
+        self._settlement_sweep()
+        total = self.db.execute("SELECT COALESCE(SUM(steps),0) FROM epoch_payments").fetchone()[0]
+        rows = self.db.execute("SELECT pubkey,payout_addr,SUM(steps) FROM epoch_payments GROUP BY pubkey,payout_addr HAVING SUM(steps)>0").fetchall()
         payouts = [
             {"pubkey": pk, "payout_addr": addr, "credited_steps": st, "credits": st / (1 << spec.credit_unit_log2),
              "share": st / total if total else 0, "usdc": spec.prize_pool_usdc * st / total if total else 0}
@@ -673,6 +737,33 @@ class Coordinator:
         self.event("solved", {"k_hex": hex(k), "finder": finder[:16], "partner": partner[:16], "ratio": round(sol["ratio"], 3)})
         return sol
 
+    def _settlement_sweep(self):
+        """Bounded integrity sweep of durable finalized payment commitments.
+
+        Sampled segment coverage is a prerequisite. Replaying unpaid points here
+        would quietly turn sampled verification back into exhaustive verification.
+        This final sweep checks the persisted ledger against its public roots;
+        its wall-clock budget does not depend on N or on the unselected DP count.
+        It never reopens immutable contributor payments.
+        """
+        if self._get_state("settlement_sweep_complete"):
+            return
+        started = time.monotonic()
+        checked = 0
+        cursor = self.db.execute("SELECT idx,root,leaves,total_steps FROM epochs WHERE audit_complete=1 ORDER BY idx DESC")
+        for idx, root, raw, total in cursor:
+            if time.monotonic()-started >= self.spec.settlement_sweep_seconds:
+                break
+            leaves = json.loads(raw)
+            actual, _ = merkle.build([merkle.leaf_hash(addr, steps) for addr, steps in leaves])
+            if actual.hex() != root or sum(steps for _, steps in leaves) != total:
+                self._set_state("status", "halted_for_review")
+                raise RuntimeError(f"epoch {idx} durable payment commitment mismatch")
+            checked += 1
+        self._set_state("settlement_sweep_complete", True)
+        self._set_state("settlement_sweep", {"seconds": time.monotonic()-started,
+            "budget_seconds": self.spec.settlement_sweep_seconds, "epochs_checked": checked})
+
     # ---------------------------------------------------------------- epochs
     def audit_epoch(self, idx, root_bytes, final=False):
         with self.lock:
@@ -680,30 +771,18 @@ class Coordinator:
                 "SELECT pubkey, t, x, y, a, b, steps FROM dps WHERE epoch=? AND checked=0 AND slashed=0 ORDER BY pubkey,t",
                 (idx,),
             ).fetchall()
-        self._audit_rows(idx, root_bytes, rows, "spot", 1 if final else self.spec.spot_check_rate,
+        self._audit_rows(idx, root_bytes, rows, "spot", self.spec.spot_check_rate,
                          "epoch_audit")
 
     def audit_delayed(self, idx, root_bytes, final=False):
-        with self.lock:
-            rows = self.db.execute(
-                "SELECT pubkey, t, x, y, a, b, steps FROM dps WHERE epoch<? AND checked=0 AND slashed=0 ORDER BY pubkey,t",
-                (idx,),
-            ).fetchall()
-        self._audit_rows(idx, root_bytes, rows, "spot2", 1 if final else self.spec.spot_check_rate * 8,
-                         "delayed_audit")
+        # Mature credit is final. Do not turn later epochs into exhaustive
+        # replays of previously paid populations.
+        return
 
     def _audit_rows(self, idx, root_bytes, rows, tag, rate, event_kind):
         beacon = self.beacon_for(idx)
-        with self.lock:
-            pressure = {pk for pk, count in self.db.execute(
-                "SELECT pubkey,COUNT(*) FROM dps WHERE checked=0 AND slashed=0 GROUP BY pubkey")
-                if count >= max(1, MAX_AUDIT_BACKLOG_DPS // 2)}
-        # Drain pressure in bounded epoch work, before intake can resume. Keep
-        # beacon ranking and per-identity selection, with a larger sampling fraction.
-        targets = self._select_targets(root_bytes, beacon,
-                                        [r for r in rows if r[0] not in pressure], tag, rate)
-        targets += self._select_targets(root_bytes, beacon,
-                                         [r for r in rows if r[0] in pressure], tag, min(rate, 2))
+        pressure = set()
+        targets = self._select_targets(root_bytes, beacon, rows, tag, rate)
         with self.lock:
             inputs = json.loads(self.db.execute(
                 "SELECT audit_inputs FROM epochs WHERE idx=?", (idx,)).fetchone()[0] or "{}")
@@ -718,7 +797,14 @@ class Coordinator:
                                "selection": "per-identity-fraction-v1",
                                "pressure_identities": sorted(pressure), "pressure_rate": min(rate, 2),
                                "candidate_total": len(rows), "failed": 0,
-                               "pairs": [[indices[r[0]], r[1]] for r in targets]}
+                               "pairs": [[indices[r[0]], r[1]] for r in targets],
+                               "fraud_bounds": [{"miner_idx": indices[pk], "k": count,
+                                   "audited": (count+rate-1)//rate,
+                                   "forged": max(1, math.ceil(count*.1)),
+                                   "phi": max(1, math.ceil(count*.1))/count,
+                                   "fraud_bound": ec.audit_fraud_bound(count, max(1, math.ceil(count*.1)),
+                                       (count+rate-1)//rate, ec.MAX_REPLAY_STEPS(self.spec)//(1<<self.spec.v))}
+                                   for pk, count in Counter(row[0] for row in rows).items()]}
                 self._store_audit_inputs(idx, inputs)
             # Resume the persisted plan, even if checked flags changed on retry.
             targets = self.db.execute(
@@ -727,37 +813,144 @@ class Coordinator:
                 "JOIN dps d ON d.pubkey=m.pubkey AND d.t=json_extract(p.value,'$[1]') "
                 "ORDER BY CAST(p.key AS INTEGER)",
                 (json.dumps(inputs[tag]["pairs"], separators=(",", ":")),)).fetchall()
-        passed = failed = 0
-        failures = {}
-        for pk, t, x, y, a, b, steps in targets:
-            dp = dict(t=t, x=x, y=y, a=a, b=b, steps=steps)
-            ok = ec.dp_verify(self.spec, self.table, pk, dp)
-            with self.lock:
-                if not self.db.execute("SELECT 1 FROM dps WHERE pubkey=? AND t=?", (pk, t)).fetchone():
-                    continue  # Collision handling may have removed the snapshot row.
-                if ok:
-                    self.db.execute("UPDATE dps SET checked=1 WHERE pubkey=? AND t=?", (pk, t))
-                    self.db.execute("UPDATE miners SET spot_checks=spot_checks+1 WHERE pubkey=?", (pk,))
-                    passed += 1
-                else:
-                    self.db.execute("DELETE FROM dps WHERE pubkey=? AND t=?", (pk, t))
-                    if pk not in failures:
-                        failures[pk] = [0, dp]
-                    failures[pk][0] += 1
-                    failed += 1
-                self.db.commit()
-        for pk, (count, first) in failures.items():
-            detail = {"epoch": idx, "pubkey": pk[:16], "failures": count,
-                      "first_failing_t": first["t"],
-                      "evidence": self._collision_evidence(pk, first)}
-            # spot_fails counts identities once per audit, not failing rows.
-            self._slash(pk, f"epoch {idx} audit failed on t={first['t']}", detail)
-            self.event("audit_failed", detail)
         with self.lock:
-            inputs[tag].update(failed=failed, complete=True)
-            self._store_audit_inputs(idx, inputs)
-        self.event(event_kind, {"epoch": idx, "targets": len(targets),
-                                "passed": passed, "failed": failed})
+            deadline_key = f"audit_deadline:{idx}"
+            deadline = self._get_state(deadline_key)
+            if deadline is None:
+                deadline = now() + self.spec.audit_response_seconds
+                self._set_state(deadline_key, deadline)
+            for pk, t, x, y, a, b, steps in targets:
+                segments = (steps + (1 << self.spec.v) - 1) >> self.spec.v
+                segment = int.from_bytes(ec.H(root_bytes, beacon, "segment-v1", pk, t), "big") % segments
+                self.db.execute("INSERT OR IGNORE INTO challenges VALUES(?,?,?,?,?,NULL)",
+                                (idx, pk, t, segment, deadline))
+            # Publishing entropy is safe now: all memberships and commitments
+            # have been sealed and the plan is durable before any response.
+            self.db.execute("UPDATE epochs SET beacon_reveal=? WHERE idx=?", (beacon.hex(), idx))
+            self.db.commit()
+
+    @db_locked
+    def audit_targets(self, pubkey):
+        return [{"epoch": ep, "t": t, "segment": seg, "deadline": deadline}
+                for ep, t, seg, deadline in self.db.execute(
+                    "SELECT epoch,t,segment,deadline FROM challenges WHERE pubkey=? AND result IS NULL "
+                    "AND deadline>=? ORDER BY epoch,t LIMIT 512", (pubkey, now()))]
+
+    def answer_audit(self, pubkey, epoch, t, opening):
+        with self.lock:
+            row = self.db.execute("SELECT segment,deadline,result FROM challenges WHERE epoch=? AND pubkey=? AND t=?",
+                                  (epoch, pubkey, t)).fetchone()
+            if row is None:
+                raise HTTPException(404, "unknown challenge")
+            segment, deadline, result = row
+            if result is not None:
+                return {"result": result}
+            late = now() > deadline
+            if late and result is None:
+                # The window has closed, but an opening that verifies still proves the
+                # work. Accept it and release what silence withheld, rather than
+                # keeping a contributor unpaid for work it can demonstrate it did.
+                pass
+            record = self.db.execute("SELECT d.x,d.y,d.a,d.b,d.steps,c.root FROM dps d "
+                                     "LEFT JOIN checkpoints c USING(pubkey,t) WHERE d.pubkey=? AND d.t=?",
+                                     (pubkey, t)).fetchone()
+            if record is None:
+                raise HTTPException(409, "point removed by collision verification")
+            x, y, a, b, steps, root = record
+            dp = dict(t=t, x=int(x), y=int(y), a=int(a), b=int(b), steps=steps, checkpoint_root=root)
+        started = time.monotonic()
+        ok, work = self._segment_verify(pubkey, dp, segment, opening)
+        with self.lock:
+            self._count_replay(work, time.monotonic()-started)
+            # Idempotent application, even if HTTP retries race.
+            changed = self.db.execute(
+                "UPDATE challenges SET result=? WHERE epoch=? AND pubkey=? AND t=? "
+                "AND (result IS NULL OR result='silent')",
+                ("passed" if ok else "failed", epoch, pubkey, t)).rowcount
+            if changed:
+                self.db.execute("INSERT OR IGNORE INTO audit_openings VALUES(?,?,?,?)", (epoch, pubkey, t, json.dumps(opening)))
+                self.db.execute("UPDATE miners SET spot_checks=spot_checks+1 WHERE pubkey=?", (pubkey,))
+                if ok:
+                    self.db.execute("UPDATE dps SET checked=1 WHERE pubkey=? AND t=?", (pubkey, t))
+                    # If every challenge for that epoch is now answered, release the
+                    # credit that silence was holding back.
+                    outstanding = self.db.execute(
+                        "SELECT 1 FROM challenges WHERE epoch=? AND pubkey=? AND "
+                        "(result IS NULL OR result='silent')", (epoch, pubkey)).fetchone()
+                    if not outstanding:
+                        released = self.db.execute(
+                            "DELETE FROM withheld WHERE epoch=? AND pubkey=?", (epoch, pubkey)).rowcount
+                        if released:
+                            self.event("credit_released", {"epoch": epoch, "pubkey": pubkey[:16]})
+                else:
+                    self._slash(pubkey, f"epoch {epoch} segment audit failed t={t}")
+                    self.event("audit_failed", {"epoch": epoch, "pubkey": pubkey[:16], "first_failing_t": t})
+            self.db.commit()
+        return {"result": "passed" if ok else "failed"}
+
+    def _segment_verify(self, pubkey, dp, segment, opening):
+        # Independent CPU work goes to processes, outside the database lock.
+        # Bound queued jobs as well as active processes under hostile intake.
+        with AUDIT_GATE.enter():
+            ok, work, elapsed, pid = audit_pool().submit(run_audit_job, self.spec, self.table,
+                                       pubkey, dp, segment, opening).result(timeout=30)
+        with self.lock:
+            self._set_state("audit_worker_steps", (self._get_state("audit_worker_steps") or 0)+work)
+            self._set_state("audit_worker_seconds", (self._get_state("audit_worker_seconds") or 0)+elapsed)
+            self._set_state("audit_worker_pids", sorted(set(self._get_state("audit_worker_pids") or []) | {pid}))
+        return ok, work
+
+    @db_locked
+    def _count_replay(self, steps, seconds=0):
+        self._set_state("verification_replay_steps", (self._get_state("verification_replay_steps") or 0) + steps)
+        self._set_state("verification_seconds", (self._get_state("verification_seconds") or 0) + seconds)
+
+    def _full_verify(self, pk, dp):
+        started = time.monotonic()
+        ok = ec.dp_verify(self.spec, self.table, pk, dp)
+        self._count_replay(int(dp["steps"]), time.monotonic()-started)
+        return ok
+
+    @db_locked
+    def _resolve_challenges(self, idx):
+        outstanding = self.db.execute("SELECT pubkey,t,deadline FROM challenges WHERE epoch=? AND result IS NULL", (idx,)).fetchall()
+        for pk, t, deadline in outstanding:
+            # A proved forgery already forfeits the pending epoch; do not hold
+            # everyone else's maturity window open waiting for its other answers.
+            slashed = self.db.execute("SELECT status FROM miners WHERE pubkey=?", (pk,)).fetchone()[0] == "slashed"
+            if slashed or now() >= deadline:
+                self.db.execute("UPDATE challenges SET result=? WHERE epoch=? AND pubkey=? AND t=?",
+                                ("forfeited" if slashed else "silent", idx, pk, t))
+        if self.db.execute("SELECT 1 FROM challenges WHERE epoch=? AND result IS NULL", (idx,)).fetchone():
+            self.db.commit()
+            return False
+        silent = [pk for pk, in self.db.execute("SELECT DISTINCT pubkey FROM challenges WHERE epoch=? AND result='silent'", (idx,))]
+        for pk in silent:
+            applied = self.db.execute("INSERT OR IGNORE INTO state(k,v) VALUES(?, 'true')",
+                                      (f"silence_applied:{idx}:{pk}",)).rowcount
+            if not applied:
+                continue
+            # Silence is not fraud. An identity that never opens its challenge has
+            # work nobody can verify, so that epoch cannot be paid, but the credit is
+            # withheld rather than destroyed: a late opening matures it, and only
+            # repeated silence, below, costs the identity its standing. Destroying
+            # credit is reserved for an answer that is wrong.
+            count_steps = self.db.execute(
+                "SELECT COUNT(*) FROM dps WHERE epoch=? AND pubkey=? AND slashed=0",
+                (idx, pk)).fetchone()[0] << self.spec.w
+            self.db.execute(
+                "INSERT OR REPLACE INTO withheld(epoch, pubkey, steps) VALUES(?,?,?)",
+                (idx, pk, count_steps))
+            count = self.db.execute("SELECT COUNT(DISTINCT epoch) FROM challenges WHERE pubkey=? AND result='silent'", (pk,)).fetchone()[0]
+            if count >= self.spec.silence_epochs:
+                self._slash(pk, f"silent in {count} audit epochs")
+        inputs = json.loads(self.db.execute("SELECT audit_inputs FROM epochs WHERE idx=?", (idx,)).fetchone()[0] or "{}")
+        for value in inputs.values():
+            value.update(complete=True, failed=self.db.execute(
+                "SELECT COUNT(*) FROM challenges WHERE epoch=? AND result='failed'", (idx,)).fetchone()[0])
+        self._store_audit_inputs(idx, inputs)
+        self.db.commit()
+        return True
 
     @staticmethod
     def _select_targets(root, beacon, rows, tag, rate):
@@ -846,9 +1039,8 @@ class Coordinator:
                         # Freeze membership/address and exclude work from later, still
                         # open epochs. This is a batch seal, NOT a payment commitment.
                         snapshot = self.db.execute(
-                            "SELECT pubkey,payout_addr,MAX(0,credited_steps - "
-                            "(SELECT COUNT(*) FROM dps d WHERE d.pubkey=m.pubkey AND d.epoch>? AND d.slashed=0)*?) "
-                            "FROM miners m WHERE status='active' AND credited_steps>0 ORDER BY pubkey",
+                            "SELECT pubkey,payout_addr,(SELECT COUNT(*) FROM dps d WHERE d.pubkey=m.pubkey AND d.epoch=? AND d.slashed=0)*? "
+                            "FROM miners m WHERE status='active' ORDER BY pubkey",
                             (idx, 1 << self.spec.w)).fetchall()
                         seal = ec.H("epoch-seal", self.spec.round_id, idx, ec.canonical(snapshot))
                         previous = self.db.execute(
@@ -870,11 +1062,20 @@ class Coordinator:
                 else:
                     self.audit_epoch(idx, bytes.fromhex(seed_root))
                     self.audit_delayed(idx, bytes.fromhex(seed_root))
+                if not self._resolve_challenges(idx):
+                    return
                 with self.lock:
                     balances = dict(self.db.execute("SELECT pubkey,credited_steps FROM miners WHERE status='active'"))
                     by_address = {}
                     for pk, addr, st in snapshot:
-                        survived = min(st, balances.get(pk, 0))
+                        failed = self.db.execute("SELECT 1 FROM challenges WHERE epoch=? AND pubkey=? AND result='failed'", (idx, pk)).fetchone()
+                        held = self.db.execute("SELECT COALESCE(SUM(steps),0) FROM withheld WHERE pubkey=?",
+                                               (pk,)).fetchone()[0]
+                        # A wrong answer forfeits the epoch. Silence only withholds:
+                        # the steps stay on the identity's balance and are subtracted
+                        # here, so they are unpayable until the opening arrives.
+                        survived = 0 if failed else max(0, min(st, balances.get(pk, 0)) - held)
+                        self.db.execute("INSERT OR IGNORE INTO epoch_payments VALUES(?,?,?,?)", (idx, pk, addr, survived))
                         if survived > 0:
                             by_address[addr] = by_address.get(addr, 0) + survived
                     rows = sorted(by_address.items())
@@ -962,7 +1163,7 @@ class Coordinator:
     def _audit_backlogs(self):
         return {pk: count * (1 << self.spec.w) for pk, count in self.db.execute(
             "SELECT d.pubkey,COUNT(*) FROM dps d JOIN miners m ON m.pubkey=d.pubkey "
-            "WHERE d.checked=0 AND d.slashed=0 AND m.status='active' GROUP BY d.pubkey")}
+            "WHERE d.checked=0 AND d.slashed=0 AND m.status='active' AND d.epoch NOT IN (SELECT idx FROM epochs WHERE audit_complete=1) GROUP BY d.pubkey")}
 
     # ---------------------------------------------------------------- reads
     @db_locked
@@ -981,6 +1182,16 @@ class Coordinator:
         checks = self.db.execute("SELECT COALESCE(SUM(spot_checks),0) FROM miners").fetchone()[0]
         last_epoch = self.db.execute("SELECT idx, root, ts, total_steps, n_miners FROM epochs WHERE audit_complete=1 ORDER BY idx DESC LIMIT 1").fetchone()
         return {
+            "settlement_sweep": self._get_state("settlement_sweep"),
+            "beacon_mode": "external" if self.beacon_url else "fallback",
+            "fraud_bound_assumption": "unpredictable post-commitment entropy; one bad segment per forged walk",
+            "operator_collusion_fraud_bound": 1.0,
+            "verifier_processes": AUDIT_WORKERS,
+            "verifier_worker_pids": self._get_state("audit_worker_pids") or [],
+            "verifier_steps_per_second": ((self._get_state("audit_worker_steps") or 0) * AUDIT_WORKERS / (self._get_state("audit_worker_seconds") or 1)),
+            "verifier_to_network_throughput_ratio": (((self._get_state("audit_worker_steps") or 0) * AUDIT_WORKERS / (self._get_state("audit_worker_seconds") or 1)) / rate if rate else None),
+            "verification_replay_steps": self._get_state("verification_replay_steps") or 0,
+            "detection": spec.detection,
             "audit_backlog_steps": sum(self._audit_backlogs().values()),
             "audit_backlog_by_identity": self._audit_backlogs(),
             "audit_backlog_limit_steps": MAX_AUDIT_BACKLOG_DPS * (1 << spec.w),
@@ -995,6 +1206,7 @@ class Coordinator:
             "started_at": self.started_at,
             "now": now(),
             "epoch": current_epoch,
+            "total_payable_steps": self.db.execute("SELECT COALESCE(SUM(steps),0) FROM epoch_payments").fetchone()[0],
             "total_credited_steps": total,
             **work,
             "total_credits": total / (1 << spec.credit_unit_log2),
@@ -1061,6 +1273,8 @@ class Coordinator:
                  "sealed": bool(r[10] or r[2]), "sealed_root": ("0x" + r[10]) if r[10] else None,
                  "audit_seed_root": "0x" + (r[11] or r[2]) if (r[11] or r[2]) else None, "total_steps": r[3], "miners": r[4],
                  "beacon_commitment": r[5], "beacon_reveal": r[6], "beacon_source": r[7],
+                 "credit_unit": "epoch-final steps",
+                 "detection": self.spec.detection,
                  "audit_complete": bool(r[8]), "audit_counts": json.loads(r[9])} for r in rows]
 
     @db_locked
@@ -1088,6 +1302,8 @@ class Coordinator:
                     (json.dumps(v["pairs"], separators=(",", ":")), limit, offset)).fetchall()
                 total, stored = v["total"], len(v["pairs"])
             result[tag] = {"tag": tag, "rate": v["rate"], "cap": v["cap"],
+                           "fraud_bounds": v.get("fraud_bounds", [])[offset:offset+limit],
+                           "fraud_bounds_total": len(v.get("fraud_bounds", [])),
                            "selection": v.get("selection", "legacy-modulo"),
                            "pressure_rate": v.get("pressure_rate", v["rate"]),
                            "pressure_identities": sorted({pk for pk, _ in pairs} &
@@ -1159,10 +1375,10 @@ def build_app(coord: Coordinator) -> FastAPI:
         all matching targets before the cap; stored_count counts retained pairs.
         next_offset pages the retained pairs; truncated explicitly reports capping.
         `candidates` pages the full original population, including removed DPs.
-        To reproduce: H(root, beacon_reveal, tag, pubkey, t), filter score % rate
-        == 0, sort by (score, pubkey, t), and take the first cap for each tag.
-        Both kinds apply limit/offset independently to each tag. Pending audits
-        return 409 so the operator secret remains private until audit completion.
+        To reproduce: group by identity, rank H(seed_root, beacon, tag, pubkey, t),
+        then take ceil(identity_count/rate) from each group. Both kinds apply
+        limit/offset independently to each tag. Pending plans are published via
+        /api/audit/targets; this endpoint reports completed audit outcomes.
         """
         return coord.epoch_audit(idx, limit, offset, kind)
 
@@ -1218,6 +1434,22 @@ def build_app(coord: Coordinator) -> FastAPI:
         return JSONResponse(coord.submit(body["pubkey"], body["dps"],
                                          steps_done=body.get("steps_done", 0), abandoned=body.get("abandoned", 0),
                                          freshness=(body.get("epoch"), body.get("seq"))))
+
+    @app.get("/api/audit/targets")
+    def audit_targets(pubkey: str):
+        return coord.audit_targets(pubkey)
+
+    @app.post("/api/audit/open")
+    def audit_open(req: Request, body: dict):
+        limit(req, body, submit_ip, submit_key)
+        body = dict(body)
+        sig = body.pop("sig", "")
+        Coordinator.verify_sig(body["pubkey"], body, sig)
+        if body.get("round_id") != coord.spec.round_id:
+            raise HTTPException(400, "wrong round_id")
+        if type(body.get("audit_epoch")) is not int or type(body.get("t")) is not int or not isinstance(body.get("opening"), dict):
+            raise HTTPException(400, "invalid audit opening")
+        return coord.answer_audit(body["pubkey"], body["audit_epoch"], body["t"], body["opening"])
 
     @app.post("/api/rotate")
     def rotate(req: Request, body: dict):

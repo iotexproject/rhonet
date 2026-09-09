@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from fastapi.testclient import TestClient
 from rhonet import ec
 from rhonet.coordinator import Coordinator, build_app
+from protocol_helpers import Coordinator
 
 
 class EpochApiTests(unittest.TestCase):
@@ -36,7 +37,7 @@ class EpochApiTests(unittest.TestCase):
                 'INSERT INTO dps(pubkey,t,x,y,a,b,steps,ts,epoch) VALUES(?,?,1,1,1,1,1,0,?)',
                 [(self.pk, epoch * count + t, epoch) for t in range(count)])
         self.coord.db.commit()
-        with patch('rhonet.coordinator.now', return_value=self.coord.started_at + epochs * self.spec.epoch_seconds + 1), patch.object(ec, 'dp_verify', return_value=True):
+        with patch('rhonet.coordinator.now', return_value=self.coord.started_at + epochs * self.spec.epoch_seconds + 1), patch.object(ec, 'verify_segment', return_value=(True, 1)):
             self.coord.close_epoch()
 
     def test_listing_size(self):
@@ -51,15 +52,15 @@ class EpochApiTests(unittest.TestCase):
 
     def test_paging_and_reproduction(self):
         actual = []
-        def verify(spec, table, pk, dp):
+        def verify(spec, table, pk, dp, segment, opening):
             actual.append((pk, dp['t']))
-            return True
+            return True, 1
         # populate normally patches replay; record it separately here.
         self.coord.db.executemany(
             'INSERT INTO dps(pubkey,t,x,y,a,b,steps,ts,epoch) VALUES(?,?,1,1,1,1,1,0,0)',
             [(self.pk, t) for t in range(600)])
         self.coord.db.commit()
-        with patch('rhonet.coordinator.now', return_value=self.coord.started_at + self.spec.epoch_seconds + 1), patch.object(ec, 'dp_verify', side_effect=verify):
+        with patch('rhonet.coordinator.now', return_value=self.coord.started_at + self.spec.epoch_seconds + 1), patch.object(ec, 'verify_segment', side_effect=verify):
             self.coord.close_epoch()
         listing = self.client.get('/api/epochs').json()
         closed = next(e for e in listing if e['idx'] == 0)
@@ -90,8 +91,8 @@ class EpochApiTests(unittest.TestCase):
             published.extend(pairs)
             expected.extend(selected[:entry['cap']])
         self.assertTrue(actual)
-        self.assertEqual(actual, published)
-        self.assertEqual(actual, expected)
+        self.assertCountEqual(actual, published)
+        self.assertCountEqual(actual, expected)
         raw = self.coord.db.execute('SELECT audit_inputs FROM epochs WHERE idx=0').fetchone()[0]
         self.assertNotIn(self.pk, raw)
         self.assertEqual(raw, json.dumps(json.loads(raw), separators=(',', ':')))
@@ -103,8 +104,9 @@ class EpochApiTests(unittest.TestCase):
             'INSERT INTO dps(pubkey,t,x,y,a,b,steps,ts,epoch) VALUES(?,?,1,1,1,1,1,0,0)',
             [(self.pk, t) for t in range(20)])
         self.coord.db.commit()
-        with patch.object(ec, 'dp_verify', return_value=True) as verify:
+        with patch.object(ec, 'verify_segment', return_value=(True, 1)) as verify:
             self.coord._audit_rows(0, bytes(32), rows, 'spot', 1, 'epoch_audit')
+            self.coord.respond()
         self.assertEqual(verify.call_count, 20)
         self.coord.db.execute('UPDATE epochs SET root=?,beacon_reveal=?,audit_complete=1 WHERE idx=0',
                               ('00' * 32, self.coord.beacon_for(0).hex()))

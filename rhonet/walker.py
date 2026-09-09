@@ -81,6 +81,9 @@ def retain_deferred(pending, batch, result):
                   key=lambda dp: dp["t"])
 
 
+AUDIT_DRAIN_SECONDS = 120.0
+
+
 def detect_device() -> str:
     """A short, self-reported label for the hardware doing the work.
 
@@ -148,6 +151,8 @@ def worker(spec_dict, pk: str, batch: int, q: mp.Queue, stop: mp.Event, cheat: b
             for dp in found:
                 dp["a"] = secrets.randbelow(spec.curve.n)
                 dp["b"] = secrets.randbelow(spec.curve.n)
+        for dp in found:
+            dp["_checkpoints"] = bw.checkpoints.pop(dp["t"])
         buf.extend(found)
         if time.time() - last > 0.5:
             q.put((buf, bw.steps_done, bw.abandoned))
@@ -213,6 +218,9 @@ def main(argv=None):
     for p in procs:
         p.start()
 
+    checkpoints = {}
+    checkpoint_epochs = {}
+    last_audit_poll = 0.0
     pending, steps_local, sent_dps, credited_steps = [], 0, 0, 0
     steps_pending, abandoned_pending = 0, 0
     last_flush = time.time()
@@ -224,11 +232,70 @@ def main(argv=None):
     old_term = signal.signal(signal.SIGTERM, shutdown)
     try:
         while True:
+            if time.time() - last_audit_poll >= .5:
+                try:
+                    targets = client.get("/api/audit/targets", params={"pubkey": pk}).json()
+                    for target in targets:
+                        points = checkpoints.get(target["t"])
+                        if points is not None:
+                            body = signed(key, {"round_id": spec.round_id, "pubkey": pk,
+                                "audit_epoch": target["epoch"], "t": target["t"],
+                                "opening": ec.checkpoint_opening(points, target["segment"])})
+                            client.post("/api/audit/open", json=body)
+                    state = client.get("/api/status").json()
+                    matured = {ep["idx"] for ep in state.get("epochs", []) if ep["audit_complete"]}
+                    for t in list(checkpoint_epochs):
+                        if checkpoint_epochs[t] in matured:
+                            checkpoints.pop(t, None)
+                            checkpoint_epochs.pop(t)
+                    if state["status"] == "solved":
+                        # Do not walk away from outstanding challenges. Credit that
+                        # is never opened cannot be verified and so cannot be paid,
+                        # and the round ending is not a reason to abandon work that
+                        # has already been done. Drain the targets, then leave.
+                        stop.set()
+                        drain_deadline = time.time() + AUDIT_DRAIN_SECONDS
+                        while time.time() < drain_deadline:
+                            try:
+                                remaining = client.get("/api/audit/targets",
+                                                       params={"pubkey": pk}).json()
+                            except httpx.HTTPError:
+                                time.sleep(0.5)
+                                continue
+                            if not remaining:
+                                break
+                            answered = 0
+                            for target in remaining:
+                                points = checkpoints.get(target["t"])
+                                if points is None:
+                                    continue
+                                body = signed(key, {"round_id": spec.round_id, "pubkey": pk,
+                                    "audit_epoch": target["epoch"], "t": target["t"],
+                                    "opening": ec.checkpoint_opening(points, target["segment"])})
+                                try:
+                                    client.post("/api/audit/open", json=body)
+                                    answered += 1
+                                except httpx.HTTPError:
+                                    pass
+                            if not answered:
+                                time.sleep(0.5)
+                        print("[walker] ROUND SOLVED", file=sys.stderr)
+                        break
+                    if state["status"] == "settling":
+                        stop.set()
+                        time.sleep(.1)
+                        continue
+                except httpx.HTTPError:
+                    pass
+                last_audit_poll = time.time()
             try:
                 if len(pending) >= 5000:
                     time.sleep(0.2)
                     raise queue.Empty
                 items, s, abandoned = q.get(timeout=0.2)
+                for dp in items:
+                    if "_checkpoints" in dp:
+                        checkpoints[dp["t"]] = dp.pop("_checkpoints")
                 pending.extend(items)
                 steps_local += s
                 steps_pending += s
@@ -250,6 +317,10 @@ def main(argv=None):
                     rc = 3
                     break
                 res = r.json()
+                rejected_indices = {i for i, _ in res.get("rejected", [])}
+                for i, dp in enumerate(batch):
+                    if i not in rejected_indices:
+                        checkpoint_epochs[dp["t"]] = res.get("epoch", epoch)
                 pending = retain_deferred(pending, batch, res)
                 retry_at = time.time() + max(0, float(res.get("retry_after", 0)))
                 batch_limit = max(1, min(5000, int(res.get("batch_limit", 256))))

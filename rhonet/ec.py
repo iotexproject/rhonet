@@ -17,8 +17,7 @@ MAX_REPLAY_STEPS_LOG2_OVER_W = 3
 
 
 def MAX_REPLAY_STEPS(spec):
-    # Bounded-cost approximation; true 2^v replay from client-held checkpoints
-    # is NOT implemented. We still replay from the PRF start.
+    # Full replay cap, used only for collision correctness and miner walk length.
     return min(1 << spec.max_walk_len_log2, 1 << (spec.w + MAX_REPLAY_STEPS_LOG2_OVER_W))
 
 
@@ -150,6 +149,47 @@ class RoundSpec:
     quota_dps_per_epoch_base: int
     prize_pool_usdc: float
     max_walk_len_log2: int
+    v: int = 2
+    audit_response_seconds: float = 10.0
+    silence_epochs: int = 3
+    settlement_sweep_seconds: float = 0.1
+    funded: bool = False
+
+    @property
+    def segments_per_walk(self):
+        return max(1, MAX_REPLAY_STEPS(self) // (1 << self.v))
+
+    @property
+    def detection(self):
+        """What the audit actually guarantees, stated so it cannot be misread.
+
+        Two different forgeries cost a cheat two different things.
+
+        A point whose coefficients do not satisfy a*G + b*Q = (x, y) is the cheap
+        forgery, and it is what a fabricating walker produces. Every segment
+        challenge re-checks that relation, so any challenge at all catches it: the
+        only escape is not being sampled, probability 1 - 1/N per point.
+
+        A point that satisfies the relation but whose committed checkpoint chain
+        does not actually connect is far more expensive to build, and it escapes a
+        challenge unless the one segment we open is the broken one. Its per-point
+        escape probability is 1 - 1/(N*S) with S segments per walk. This is the
+        weaker of the two and is the number to quote.
+
+        Both assume the audit seed is unpredictable when the batch is sealed. With
+        a leaked seed and adaptively chosen submissions the bound is 1, which is
+        why a funded round requires an external beacon.
+        """
+        n, seg = self.spot_check_rate, self.segments_per_walk
+        return {
+            "sampling_rate": f"1 in {n}",
+            "segments_per_walk": seg,
+            "escape_per_inconsistent_point": 1.0 - 1.0 / n,
+            "escape_per_broken_chain_point": 1.0 - 1.0 / (n * seg),
+            "note": ("Per point. An identity forging f points escapes with the f-th power, "
+                     "so forging at scale is caught quickly; forging once is cheap to hide. "
+                     "Assumes an unpredictable audit seed."),
+        }
 
     @property
     def Q(self):
@@ -162,6 +202,15 @@ class RoundSpec:
 
     def validate(self, deep: bool = True):
         """Reject invalid round parameters; deep=False skips only scalar products."""
+        if self.w < 1:
+            raise ValueError("w must be >= 1")
+        if type(self.v) is not int or not 1 <= self.v <= self.w:
+            raise ValueError("v must satisfy 1 <= v <= w")
+        if (not math.isfinite(self.audit_response_seconds) or not math.isfinite(self.settlement_sweep_seconds)
+                or self.audit_response_seconds <= 0 or self.silence_epochs < 1 or self.settlement_sweep_seconds < 0):
+            raise ValueError("invalid audit maturity parameters")
+        if type(self.funded) is not bool:
+            raise ValueError("funded must be boolean")
         if self.w < 1:
             raise ValueError("w must be >= 1")
         if self.r < 2 or self.r & (self.r - 1):
@@ -208,11 +257,17 @@ class RoundSpec:
         d = self.__dict__.copy()
         d["curve"] = self.curve.to_dict()
         d["expected_steps"] = self.expected_steps
+        d["detection"] = self.detection
         return d
 
     @staticmethod
     def from_dict(d):
         spec = RoundSpec(
+            v=int(d.get("v", min(12, max(1, int(d["w"]) - 6)))),
+            audit_response_seconds=float(d.get("audit_response_seconds", 10)),
+            silence_epochs=int(d.get("silence_epochs", 3)),
+            settlement_sweep_seconds=float(d.get("settlement_sweep_seconds", .1)),
+            funded=d.get("funded", False),
             round_id=d["round_id"],
             curve=Curve.from_dict(d["curve"]),
             qx=int(d["qx"]),
@@ -350,7 +405,7 @@ def ticket_verify(spec: RoundSpec, table, pubkey_hex: str, ticket: dict) -> bool
 
 
 def dp_verify(spec: RoundSpec, table, pubkey_hex: str, dp: dict) -> bool:
-    """Full replay of one walk segment: start from PRF(round, pubkey, t),
+    """Full replay of one walk (collision fallback only): start from PRF(round, pubkey, t),
     take `steps` steps, must land exactly on (x, y) with coefficients (a, b)."""
     steps = int(dp["steps"])
     if steps <= 0 or steps > MAX_REPLAY_STEPS(spec):
@@ -361,6 +416,30 @@ def dp_verify(spec: RoundSpec, table, pubkey_hex: str, dp: dict) -> bool:
         return False
     a, b, P = res
     return a == int(dp["a"]) and b == int(dp["b"]) and P[0] == int(dp["x"]) and P[1] == int(dp["y"])
+
+
+def audit_fraud_bound(k, forged, audited, max_segments=1):
+    """Probability all challenges miss, with uniform unpredictable sampling.
+
+    Let J be the count of forged points among m=ceil(k/N) sampled points.
+    Pr[J=j] = C(f,j) C(k-f,m-j) / C(k,m). A forged walk with at least
+    one bad segment among at most S segments passes with probability <=1-1/S.
+    Thus epsilon <= sum_j Pr[J=j]*(1-1/S)**j, and P(caught)>=1-epsilon.
+    With S=1 this reduces to C(k-f,m)/C(k,m) <= (1-phi)**m, phi=f/k.
+    With known entropy and adaptive submissions the general bound is 1.
+    """
+    if not 0 <= forged <= k or not 0 <= audited <= k or max_segments < 1:
+        raise ValueError("invalid fraud-bound population")
+    def logchoose(n, r):
+        if not 0 <= r <= n:
+            return float('-inf')
+        return math.lgamma(n+1)-math.lgamma(r+1)-math.lgamma(n-r+1)
+    denom = logchoose(k, audited)
+    if max_segments == 1:
+        return min(1.0, math.exp(logchoose(k-forged, audited)-denom))
+    logpass = math.log1p(-1/max_segments)
+    return min(1.0, sum(math.exp(logchoose(forged,j)+logchoose(k-forged,audited-j)-denom+j*logpass)
+                        for j in range(max(0,audited-k+forged), min(forged,audited)+1)))
 
 
 def solve_collision_detail(spec: RoundSpec, d1: dict, d2: dict) -> dict:
@@ -411,6 +490,7 @@ class BatchWalker:
         self.dpmask = (1 << spec.w) - 1
         self.max_len = MAX_REPLAY_STEPS(spec)
         self.rng_t = rng_t
+        self.checkpoints = {}
         self.walks = [self._fresh() for _ in range(batch)]
         self.steps_done = 0
         self.abandoned = 0
@@ -422,6 +502,7 @@ class BatchWalker:
             # Coefficients can cancel even when both are nonzero. Skip this
             # identifier; replay retains the same public PRF start semantics.
             if P is not INF:
+                self.checkpoints[t] = [[a, b, P[0], P[1]]]
                 return [P[0], P[1], a, b, t, 0]  # x, y, a, b, t, steps
 
     def step(self):
@@ -459,6 +540,7 @@ class BatchWalker:
             x1, y1 = wlk[0], wlk[1]
             if Rx == x1:
                 self.abandoned += 1
+                self.checkpoints.pop(wlk[4], None)
                 walks[i] = self._fresh()
                 continue
             lam = (Ry - y1) * di % p
@@ -469,11 +551,96 @@ class BatchWalker:
             wlk[2] = (wlk[2] + cj) % n
             wlk[3] = (wlk[3] + dj) % n
             wlk[5] += 1
+            if wlk[5] % (1 << self.spec.v) == 0 or x3 & dpmask == 0:
+                self.checkpoints[wlk[4]].append([wlk[2], wlk[3], x3, y3])
             if x3 & dpmask == 0:
-                found.append({"x": x3, "y": y3, "a": wlk[2], "b": wlk[3], "t": wlk[4], "steps": wlk[5]})
+                found.append({"x": x3, "y": y3, "a": wlk[2], "b": wlk[3], "t": wlk[4], "steps": wlk[5],
+                              "checkpoint_root": checkpoint_root(self.checkpoints[wlk[4]])})
                 walks[i] = self._fresh()
             elif wlk[5] >= self.max_len:
                 self.abandoned += 1
+                self.checkpoints.pop(wlk[4], None)
                 walks[i] = self._fresh()
         self.steps_done += B
         return found
+
+
+    def open_segment(self, t, segment):
+        return checkpoint_opening(self.checkpoints[t], segment)
+
+
+def checkpoint_layers(points):
+    layer = [H("checkpoint-leaf-v1", i, canonical(point)) for i, point in enumerate(points)]
+    layers = [layer]
+    while len(layer) > 1:
+        layer = [H("checkpoint-node-v1", layer[i], layer[min(i + 1, len(layer)-1)])
+                 for i in range(0, len(layer), 2)]
+        layers.append(layer)
+    return layers
+
+
+def checkpoint_root(points):
+    return checkpoint_layers(points)[-1][0].hex()
+
+
+def checkpoint_opening(points, segment):
+    layers = checkpoint_layers(points)
+    def opening(index):
+        proof, pos = [], index
+        for layer in layers[:-1]:
+            proof.append(layer[min(pos ^ 1, len(layer)-1)].hex())
+            pos //= 2
+        return {"point": points[index], "proof": proof}
+    return {"start": opening(segment), "end": opening(segment+1)}
+
+
+def checkpoint_verify(root, count, index, opening):
+    if not 0 <= index < count:
+        return False
+    point, proof = opening["point"], opening["proof"]
+    if len(point) != 4 or any(type(x) is not int for x in point):
+        return False
+    if len(proof) != (count-1).bit_length():
+        return False
+    node = H("checkpoint-leaf-v1", index, canonical(point))
+    for sibling in proof:
+        sibling = bytes.fromhex(sibling)
+        if len(sibling) != 32:
+            return False
+        node = H("checkpoint-node-v1", sibling, node) if index & 1 else H("checkpoint-node-v1", node, sibling)
+        index //= 2
+    return node.hex() == root
+
+
+def verify_segment(spec, table, pubkey, dp, segment, opening):
+    """Pure process-worker entry point. Return validity and actual replay work."""
+    work = 0
+    try:
+        length = 1 << spec.v
+        segments = (dp["steps"] + length - 1) // length
+        if not 0 <= segment < segments:
+            return False, work
+        c = spec.curve
+        states = []
+        for index, name in ((segment, "start"), (segment+1, "end")):
+            item = opening[name]
+            if not checkpoint_verify(dp["checkpoint_root"], segments+1, index, item):
+                return False, work
+            a, b, x, y = item["point"]
+            if not (0 <= a < c.n and 0 <= b < c.n and 0 <= x < c.p and 0 <= y < c.p):
+                return False, work
+            if not c.on_curve((x, y)) or c.add(c.mul(a, c.G), c.mul(b, spec.Q)) != (x, y):
+                return False, work
+            states.append((a, b, (x, y)))
+        if segment == 0 and states[0] != derive_start(spec, pubkey, dp["t"]):
+            return False, work
+        # Bind the submitted coefficients on every challenge. A valid segment
+        # cannot launder fabricated collision coefficients at the endpoint.
+        if c.add(c.mul(dp["a"], c.G), c.mul(dp["b"], spec.Q)) != (dp["x"], dp["y"]):
+            return False, work
+        if segment == segments-1 and states[1] != (dp["a"], dp["b"], (dp["x"], dp["y"])):
+            return False, work
+        work = min(length, dp["steps"] - segment*length)
+        return replay(spec, table, *states[0], work) == states[1], work
+    except (KeyError, ValueError, TypeError, IndexError, OverflowError):
+        return False, work

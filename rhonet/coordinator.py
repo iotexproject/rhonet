@@ -41,11 +41,19 @@ from fastapi.responses import FileResponse, JSONResponse
 
 from . import ec, merkle
 
-MAX_AUDIT_BACKLOG_DPS = 4096
 MAX_TELEMETRY_PER_SUBMISSION = 1 << 40
 
 def _env_num(name, default, cast=float):
     return cast(os.environ.get(name, default))
+
+
+# How many of one identity's points may sit in a still-open epoch, unverified.
+# It bounds coordinator exposure, not fraud -- sampling bounds fraud whatever the
+# volume, and unaudited points earn nothing until their epoch closes and is
+# audited. It was 4096, which on Exercise 97 caps an identity near 600 M steps per
+# second: below one current GPU, and so a throttle on exactly the contributors the
+# round is trying to attract. Beyond the gate, the per-epoch quota still applies.
+MAX_AUDIT_BACKLOG_DPS = _env_num("RHONET_AUDIT_BACKLOG_DPS", 65536, int)
 
 
 STATUS_CACHE_SECONDS = _env_num("RHONET_STATUS_CACHE_SECONDS", 1.0)

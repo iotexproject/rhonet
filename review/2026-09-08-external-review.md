@@ -501,7 +501,9 @@ failing it was slashing. Any new rule that can slash needs an explicit answer to
 - **R-9b**: `EcMath` assumes a prime modulus it does not check.
 - **The negation map is not implemented**, costing 1.41×. This is deliberate: it is one of
   the things a better client should do, and the reference client is not trying to be one.
-- **The dead `T_WINDOW` constant** from R-3 is still there.
+- **R-3 is fully closed.** `T_WINDOW` and the `t_gaps` column are gone; only the
+  migration that drops the legacy column remains, deliberately, so an old database
+  can still be opened.
 
 **What a first public round is actually testing.** Not whether the mathematics works — 1,200
 calibrated solves settled that. It is testing the parts that only appear with strangers:

@@ -153,6 +153,14 @@ epoch it stays admitted. This is slow-start, not rationing: it bounds how fast a
 unknown identity can flood the audit queue, and it stops being a constraint within
 a few hours for anyone real.
 
+A second gate sits behind the quota: at most 65,536 of one identity's points may
+sit in a still-open epoch unverified (`RHONET_AUDIT_BACKLOG_DPS`). It bounds what
+the coordinator is holding, not fraud — sampling bounds fraud whatever the volume,
+and an unaudited point earns nothing until its epoch closes and is audited. The
+old value, 4,096, worked out to about 600 M steps per second on this round: below
+one current GPU, and therefore a throttle on exactly the contributors this round is
+trying to attract. A launch rehearsal found it.
+
 Points refused for `quota` or `audit backlog` are **not** fraud. The response says
 which indices to retry and when; a client must resubmit them with the same `t` and
 the same coefficients. An earlier version of this system slashed an honest

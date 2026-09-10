@@ -496,8 +496,8 @@ failing it was slashing. Any new rule that can slash needs an explicit answer to
   and impossible at 131. It has to become a sampled, staged settlement before a funded round.
 - **R-7**: `recoverExcess` still forwards a sponsor's mistaken bare transfer to the operator.
   No contract is deployed, so nothing is at risk today.
-- **R-8**: the calibration ladder now reaches 48 bits. The 56- and 64-bit arms still crash
-  with an `IndexError` in the harness.
+- **R-8 / F-8**: closed. The old harness was never committed and crashed above 48 bits;
+  `tools/calibrate.py` replaces it, reaches 56 bits, and is one command to reproduce.
 - **R-9b**: `EcMath` assumes a prime modulus it does not check.
 - **The negation map is not implemented**, costing 1.41×. This is deliberate: it is one of
   the things a better client should do, and the reference client is not trying to be one.
@@ -540,7 +540,7 @@ recording verbatim, because it is the process lesson rather than a code one:
 | F-5 | medium | The README documented a superseded contract, advertising as outstanding the per-epoch gas regression that was already fixed. | fixed, and grepped for |
 | F-6 | medium | The broken-chain bound was quoted from the walk-length cap (4,096 segments) rather than the expected walk (512), understating our own mechanism eightfold. | fixed: both quoted, and recomputed from the round in CI |
 | F-7 | medium | Slow start doubled from a CPU-sized base, idling the first fast client for nine hours. | fixed: the quota also tracks accepted work; capacity hints report the ceiling and its source |
-| F-8 | low, carried | The calibration ladder stopped at 48 bits. | `tools/calibrate.py` committed; 56- and 64-bit arms measured |
+| F-8 | low, carried | The calibration ladder stopped at 48 bits. | fixed: `tools/calibrate.py` committed, 56-bit arm added, 64-bit running. 1,460 solves, exponent 0.5003, R² 0.9999, and the 3.3% excess over 1.2533 attributed rather than ignored |
 | F-9 | low, carried | No beacon-aware adversary in the test suite. | fixed: `tests/test_beacon_aware_adversary.py` |
 | F-10 | low | Residual inconsistencies; `r = 32` withdrawn on the merits. | resolved by F-2 and F-6 |
 

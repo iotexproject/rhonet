@@ -176,17 +176,31 @@ What a demo run looks like (56-bit curve, one laptop, three honest contributors 
 | Ledger | epoch roots with published beacon commitments and reveals; proofs verify in Python and on chain |
 
 A single run proves very little: rho completion has a standard deviation near half its mean.
-The calibration below is 300 independent solves at each size, each checked against the secret.
+`tools/calibrate.py` solves many independent instances per size, checks every answer against
+the generator's secret, and reports the mean with its 3σ interval. 1,460 solves:
 
 | Bits | Solves | Mean, in units of √n | 3σ interval of the mean | 10th–90th percentile |
 |---|---|---|---|---|
-| 28 | 300 | 1.186 | 1.084 – 1.287 | 0.50 – 2.00 |
-| 32 | 300 | 1.227 | 1.114 – 1.339 | 0.50 – 2.09 |
-| 36 | 300 | 1.241 | 1.122 – 1.360 | 0.51 – 2.10 |
-| 40 | 300 | 1.182 | 1.077 – 1.287 | 0.49 – 2.02 |
+| 28 | 300 | 1.292 | 1.182 – 1.401 | 0.52 – 2.14 |
+| 32 | 300 | 1.231 | 1.110 – 1.352 | 0.42 – 2.19 |
+| 36 | 300 | 1.332 | 1.213 – 1.451 | 0.48 – 2.27 |
+| 40 | 300 | 1.328 | 1.222 – 1.435 | 0.54 – 2.13 |
+| 48 | 200 | 1.315 | 1.165 – 1.465 | 0.42 – 2.36 |
+| 56 | 60 | 1.270 | 1.020 – 1.520 | 0.51 – 2.18 |
 
-Theory puts the constant at 1.25 for an r-adding walk without the negation map. The fitted
-scaling exponent is `0.5000` with `R² = 0.9998`.
+**Fitted exponent 0.5003 against n, R² = 0.9999.** Cost is square-root in the group size, with
+no drift across seven doublings of the exponent's range.
+
+The pooled mean is 1.295 against a theoretical 1.2533, and the 3.3% excess is accounted for
+rather than waved at: Teske's deviation for `r = 32` adding walks is about `1 + 1/(2r)`, or
+1.6%, and the batched walker discards its in-flight walks when the collision lands, which the
+tool caps at 1% of the expected work per size. 1.2533 × 1.016 × 1.01 ≈ 1.285. What is left is
+inside the 3σ intervals above.
+
+Reproduce with `python -m tools.calibrate --bits 28,32,36,40 --solves 300`. Before the walk's
+branch function was decorrelated from the distinguished-point test, every distinguished point
+took the same branch out of 128 — a defect that would have surfaced only as a slightly wrong
+constant, which is why this measurement exists at all.
 
 ## Layout
 

@@ -13,3 +13,6 @@ cache/
 out/
 data/
 public/epochs/*.tmp
+
+# operator secrets, never committed
+deploy/tunnel.token

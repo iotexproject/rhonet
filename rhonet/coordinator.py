@@ -36,6 +36,7 @@ from functools import wraps
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 
 from . import ec, merkle
@@ -358,8 +359,9 @@ class Coordinator:
         """Return cached per-epoch entropy. HTTP failures abort closure, never downgrade.
 
         The URL may contain {epoch} and {root}; it must return a 32-byte hex hash
-        as plain text, a JSON string, or {"hash": "0x..."}. Production must bind
-        this to an external event after the sealed batch commitment, unknown at seal time.
+        as plain text, a JSON string, or an object carrying it under "randomness"
+        (drand) or "hash". Production must bind this to an external event after the
+        sealed batch commitment, unknown at seal time.
         {root} is the sealed batch commitment, never the payment root.
         Fetch only after sealing. Publish the reveal with the durable challenge plan.
         """
@@ -388,12 +390,26 @@ class Coordinator:
         except json.JSONDecodeError:
             pass
         if isinstance(value, dict):
-            value = value.get("hash")
+            # drand publishes the value under "randomness"; prefer it. Its /info
+            # endpoint also carries a "hash", which is the *chain* identifier and
+            # never changes, so reading "hash" first would silently turn a
+            # misconfigured URL into a constant beacon.
+            value = value.get("randomness") or value.get("hash")
         if not isinstance(value, str):
             raise ValueError("beacon must return a hex hash")
         beacon = bytes.fromhex(value.removeprefix("0x"))
         if len(beacon) != 32:
             raise ValueError("beacon must be 32 bytes")
+        # A beacon that repeats is not a beacon. Whatever the cause -- a pinned
+        # URL, a cached response, an endpoint returning a constant -- the audit
+        # becomes predictable, so refuse to close the epoch rather than run an
+        # audit that guarantees nothing.
+        previous = self.db.execute(
+            "SELECT beacon_reveal FROM epochs WHERE idx<? AND beacon_reveal IS NOT NULL "
+            "ORDER BY idx DESC LIMIT 1", (epoch,)).fetchone()
+        if previous and previous[0] == beacon.hex():
+            raise ValueError("external beacon repeated the previous epoch's value; "
+                             "the audit would be predictable, so the epoch stays open")
         self._set_state(f"beacon_value:{epoch}", beacon.hex())
         return beacon
 
@@ -1340,6 +1356,31 @@ def build_app(coord: Coordinator) -> FastAPI:
             worker.join()
 
     app = FastAPI(title="RhoNet coordinator", version="0.1", lifespan=lifespan)
+
+    # The public board is served from rhonet.dev and reads this API cross-origin.
+    # Only reads are granted, and only to the site's own origins: there are no
+    # cookies or ambient credentials here, so this widens nothing that a client
+    # outside a browser could not already do, and a browser cannot be induced to
+    # submit on someone's behalf. RHONET_ALLOWED_ORIGINS overrides for a mirror.
+    origins = [o.strip() for o in os.environ.get(
+        "RHONET_ALLOWED_ORIGINS",
+        "https://rhonet.dev,https://www.rhonet.dev").split(",") if o.strip()]
+    app.add_middleware(CORSMiddleware, allow_origins=origins,
+                       allow_methods=["GET"], allow_headers=[], max_age=600)
+
+    @app.get("/healthz")
+    def healthz():
+        """Cheap liveness for the tunnel and the monitor: no replay, no scan."""
+        with coord.lock:
+            epoch = coord.current_epoch()
+            behind = coord.db.execute(
+                "SELECT COUNT(*) FROM epochs WHERE audit_complete=0 AND idx<?", (epoch,)).fetchone()[0]
+        ok = coord.epoch_loop_failures < 3
+        return JSONResponse({"ok": ok, "status": coord.status, "epoch": epoch,
+                             "epochs_awaiting_close": behind,
+                             "epoch_loop_failures": coord.epoch_loop_failures,
+                             "round_id": coord.spec.round_id},
+                            status_code=200 if ok else 503)
 
     @app.get("/")
     def index():

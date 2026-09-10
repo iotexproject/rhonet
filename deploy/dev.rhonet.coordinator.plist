@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/dev.rhonet.coordinator.plist
+     Edit REPO below to the checkout path before installing. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>dev.rhonet.coordinator</string>
+  <key>ProgramArguments</key>
+  <array><string>REPO/deploy/run-coordinator.sh</string></array>
+  <key>WorkingDirectory</key><string>REPO</string>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ThrottleInterval</key><integer>15</integer>
+  <key>StandardOutPath</key><string>REPO/logs/coordinator.log</string>
+  <key>StandardErrorPath</key><string>REPO/logs/coordinator.log</string>
+  <key>ProcessType</key><string>Background</string>
+  <key>Nice</key><integer>5</integer>
+</dict>
+</plist>

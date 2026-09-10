@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- The connector token comes from tools/cf_tunnel.py. Keep it out of the repo. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>dev.rhonet.tunnel</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/sh</string><string>-c</string>
+    <string>exec /opt/homebrew/bin/cloudflared tunnel run --token "$(cat REPO/deploy/tunnel.token)"</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ThrottleInterval</key><integer>15</integer>
+  <key>StandardOutPath</key><string>REPO/logs/tunnel.log</string>
+  <key>StandardErrorPath</key><string>REPO/logs/tunnel.log</string>
+</dict>
+</plist>

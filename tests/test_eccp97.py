@@ -83,7 +83,7 @@ class Eccp97Tests(unittest.TestCase):
         self.assertIn("eccp97a.c", text)
         self.assertIn(f"{HISTORICAL_K:x}", text.lower())
         with open(ROUND) as f:
-            self.assertEqual(json.load(f)["round_id"], "eccp-97-exercise")
+            self.assertEqual(json.load(f)["round_id"], "exercise-97")
 
 
 if __name__ == "__main__":

@@ -171,55 +171,55 @@ footer{margin-top:72px;padding-top:18px;border-top:1px solid var(--line);color:v
 <div class="hero">
   <canvas id="walk" aria-hidden="true"></canvas>
   <div class="hero-in">
-    <h1>Put your GPU on a bounty that has been open since <span>1997</span>.</h1>
-    <p class="lede">Certicom's ECCp-131 challenge pays <b>$20,000</b> to whoever computes one discrete logarithm. It takes about <b>6.5 × 10<sup>19</sup></b> elliptic-curve steps, roughly three weeks of a thousand consumer GPUs. RhoNet is how strangers search it together: <b>every verified step earns credit, and whoever contributed shares the prize when the answer falls out.</b></p>
-    <p class="lede" style="font-size:15.5px">Volunteer computing has existed since SETI@home, and it has never been able to pay a stranger, because nobody could check what a stranger submitted. That is the part we built: work is verified by replaying a segment of it, so contribution is a fact rather than a claim, and the prize can be split by rule instead of by trust.</p>
+    <h1>A public search you can join, on a problem from <span>1997</span>.</h1>
+    <p class="lede">RhoNet is running <b>Exercise 97</b>: Certicom's ECCp-97 challenge, the real curve, about <b>4.2 × 10<sup>14</sup></b> elliptic-curve steps. It was first solved in 1998 by 588 people over 53 days. <b>Every step you contribute is verified by replay, and the board says so in your name.</b></p>
+    <p class="lede" style="font-size:15.5px">Volunteer computing has existed since SETI@home, and it has never been able to pay a stranger, because nobody could check what a stranger submitted. That is the part we built: work is verified by replaying a segment of it, so contribution is a fact rather than a claim, and a prize can be split by rule instead of by trust. Exercise 97 has no prize — it has a known answer, which is the point. Next is <b>ECCp-131</b>, unsolved, $20,000, open since 1997.</p>
     <a class="cta solid" href="#join">Join the search</a>
     <a class="cta" href="#board" style="margin-left:8px">See the board</a>
   </div>
 
-  <div class="strip">
-    <div><div class="l">Live round</div><div class="v"><span class="dot"></span>none open</div></div>
-    <div><div class="l">Next target</div><div class="v">ECCp-131 <small>$20,000</small></div></div>
-    <div><div class="l">Work required</div><div class="v">6.5e19 <small>steps</small></div></div>
-    <div><div class="l">On 1,000 GPUs</div><div class="v">~19 <small>days</small></div></div>
-    <div><div class="l">Credit unit</div><div class="v">2^30 <small>steps</small></div></div>
+  <div class="strip" id="strip">
+    <div><div class="l">Round</div><div class="v" id="s-round"><span class="dot" id="s-dot"></span>exercise-97</div></div>
+    <div><div class="l">Progress</div><div class="v" id="s-progress">—<small>opening</small></div></div>
+    <div><div class="l">Network rate</div><div class="v" id="s-rate">—<small>steps/s</small></div></div>
+    <div><div class="l">Contributors</div><div class="v" id="s-people">—</div></div>
+    <div><div class="l">Verification cost</div><div class="v" id="s-cost">0.006%<small>of search</small></div></div>
   </div>
 </div>
 
 <section id="board">
-  <div class="shead"><h2>Leaderboard</h2><span class="rule"></span><span class="note">last completed round · identities verified on github</span></div>
+  <div class="shead"><h2>Leaderboard</h2><span class="rule"></span><span class="note" id="b-note">identities verified on github · hardware self-reported</span></div>
   <div class="panel">
     <div class="phead">
-      <h3>public-demo <span style="color:var(--faint);font-weight:400">· solved</span></h3>
-      <span class="sub">48-bit curve · 11,401 points · 8 epochs · notional pool, no funds held</span>
+      <h3 id="b-title">public-demo <span style="color:var(--faint);font-weight:400">· solved</span></h3>
+      <span class="sub" id="b-sub">48-bit curve · 11,401 points · 8 epochs · notional pool, no funds held</span>
     </div>
     <div class="tbl">
     <table>
-      <thead><tr><th class="rk">#</th><th>Contributor</th><th class="r">Credits</th><th class="r">Share</th><th class="r">Pro-rata split</th><th class="r">Segments replayed</th></tr></thead>
-      <tbody>
+      <thead><tr><th class="rk">#</th><th>Contributor</th><th class="r">Credits</th><th class="r">Share</th><th class="r">Points</th><th class="r">Segments replayed</th></tr></thead>
+      <tbody id="b-body">
         <tr><td class="rk top">01</td>
             <td class="who"><a href="https://github.com/raullenchai">raullenchai</a><span class="sub2">Apple M3 Ultra · 4 worker processes</span></td>
             <td class="r num">19.000</td>
             <td class="r"><span class="share"><span class="meter"><i style="width:100%"></i></span><span class="num">51.1%</span></span></td>
-            <td class="r num">5,110.00</td><td class="r num">4,863 ✓</td></tr>
+            <td class="r num">5,110</td><td class="r num">4,863 ✓</td></tr>
         <tr><td class="rk">02</td>
             <td class="who"><a href="https://github.com/claude">claude</a><span class="sub2">Apple M3 Ultra · 2 worker processes</span></td>
             <td class="r num">18.152</td>
             <td class="r"><span class="share"><span class="meter"><i style="width:96%"></i></span><span class="num">48.9%</span></span></td>
-            <td class="r num">4,890.00</td><td class="r num">4,646 ✓</td></tr>
+            <td class="r num">4,890</td><td class="r num">4,646 ✓</td></tr>
         <tr class="out"><td class="rk">—</td>
             <td class="who">unregistered key ae1e757e… <span class="tag">disqualified</span><span class="sub2">a point it submitted did not replay</span></td>
             <td class="r num">0.000</td><td class="r"><span class="share"><span class="meter"></span><span class="num">0%</span></span></td>
-            <td class="r num">0.00</td><td class="r num">0 ✓</td></tr>
+            <td class="r num">0</td><td class="r num">0 ✓</td></tr>
         <tr class="out"><td class="rk">—</td>
             <td class="who">unregistered key 612349ce… <span class="tag">disqualified</span><span class="sub2">forged, and filtered its work to dodge the audit</span></td>
             <td class="r num">0.000</td><td class="r"><span class="share"><span class="meter"></span><span class="num">0%</span></span></td>
-            <td class="r num">0.00</td><td class="r num">0 ✓</td></tr>
+            <td class="r num">0</td><td class="r num">0 ✓</td></tr>
       </tbody>
     </table>
     </div>
-    <div class="pfoot">A real round on one machine. The two registered accounts are shown by their GitHub login because each opened a pull request binding that account to its key; the two forgers registered nothing, so they are shown as keys and never as somebody's account. Hardware is self-reported by the walker, not measured. The four contributors ran alongside the coordinator, whose end-of-round pass replayed every single point, so the split reflects contention for one machine rather than the process counts. Every epoch's audit is published and re-derived in CI: <a href="https://github.com/iotexproject/rhonet/tree/main/public/epochs">public/epochs</a>. The pool is notional; no contract has been deployed and nobody has been paid.</div>
+    <div class="pfoot" id="b-foot">Shown until Exercise 97 opens: the last completed round, a 48-bit curve run on one machine. The two registered accounts appear by their GitHub login because each opened a pull request binding that account to its key; the two forgers registered nothing, so they are shown as keys and never as somebody's account. Hardware is self-reported by the walker, not measured. Every epoch's audit is published and re-derived in CI: <a href="https://github.com/iotexproject/rhonet/tree/main/public/epochs">public/epochs</a>. The pool was notional; nobody has been paid.</div>
   </div>
 </section>
 
@@ -227,21 +227,25 @@ footer{margin-top:72px;padding-top:18px;border-top:1px solid var(--line);color:v
   <div class="shead"><h2>Join</h2><span class="rule"></span><span class="note">bring a machine, or bring a faster client</span></div>
   <div class="panel" style="padding:20px">
     <h3>The reference client is slow on purpose. Beating it is part of the work.</h3>
-    <p style="color:var(--muted);font-size:14.5px;margin:0 0 14px">The coordinator verifies a submission by replaying a segment of the walk against the round specification. It has no opinion about how you produced it. So the Python client below is a <em>reference implementation</em>: it defines what correct means, not what fast means. Anyone is welcome to write a faster one, in any language, on any hardware, and every step it earns counts the same. Credit is proportional to verified work, so a better client is paid for being better.</p>
-<pre><span class="c"># clone, install, point a walker at an open search</span>
+    <p style="color:var(--muted);font-size:14.5px;margin:0 0 14px">The coordinator verifies a submission by replaying a segment of the walk against the round specification. It has no opinion about how you produced it. So the Python client below is a <em>reference implementation</em>: it defines what correct means, not what fast means. It does 0.7–0.8 million steps per second per core, and there is no scenario in which that is a good number. Anyone is welcome to write a faster one, in any language, on any hardware, and every step it earns counts the same.</p>
+<pre><span class="c"># clone, install, register a github identity, walk</span>
 git clone https://github.com/iotexproject/rhonet &amp;&amp; cd rhonet
 python3 -m venv .venv &amp;&amp; .venv/bin/pip install fastapi <span class="p">'uvicorn[standard]'</span> cryptography httpx
-.venv/bin/python -m rhonet.walker --coordinator https://<span class="p">&lt;round host&gt;</span> --payout <span class="p">0x&lt;your address&gt;</span>
+.venv/bin/python -m tools.contributor sign --github <span class="p">&lt;you&gt;</span> --key walker.key \
+    --payout <span class="p">0x&lt;your address&gt;</span> &gt; contributors/<span class="p">&lt;you&gt;</span>.json   <span class="c"># then open a PR</span>
+.venv/bin/python -m rhonet.walker --coordinator https://api.rhonet.dev \
+    --payout <span class="p">0x&lt;your address&gt;</span> --procs 8
 
 <span class="c"># or run the whole system yourself: a fresh curve, a coordinator, three</span>
 <span class="c"># honest contributors and two forgers, solved and settled in about two minutes</span>
 ./demo.sh</pre>
+    <p style="color:var(--muted);font-size:14.5px;margin:14px 0 0">Full walkthrough: <a href="https://github.com/iotexproject/rhonet/blob/main/docs/JOIN.md">docs/JOIN.md</a>. Your first run mints an admission ticket — about 2<sup>30</sup> steps of the same walk the search is made of, twenty minutes on one core and under three on eight. That cost is what stops a thousand fresh identities from farming quota, and because it is the same kernel, a faster client mints tickets faster in exactly the proportion that it searches faster.</p>
   </div>
 
   <div class="grid" style="margin-top:14px">
-    <div class="card"><h3>What a client has to get right</h3><p>Derive its start points from the round and its own public key, follow the adding walk, submit distinguished points with a Merkle commitment to its checkpoint chain, sign the batch, and open a challenged segment on request. Nothing else is prescribed. The arithmetic, the batching, the memory layout and the hardware are yours.</p></div>
-    <div class="card"><h3>How you know yours is correct</h3><p>A published specification and conformance vectors: for a fixed round and identity, the intermediate states, the first distinguished point, its checkpoint root and the exact bytes of a signed submission. Run them and you know before you join, rather than finding out by being disqualified.</p></div>
-    <div class="card"><h3>How the competition is scored</h3><p>The board shows the client and the hardware alongside the credit, so a faster implementation is visible as well as paid. The reference client exists to be beaten; if the standing record is still Python, the round is telling you something.</p></div>
+    <div class="card"><h3>What a client has to get right</h3><p>Derive its start points from the round and its own public key, follow the adding walk, submit distinguished points with a Merkle commitment to its checkpoint chain, sign the batch, and open a challenged segment on request. Nothing else is prescribed. The arithmetic, the batching, the memory layout and the hardware are yours. <a href="https://github.com/iotexproject/rhonet/blob/main/docs/PROTOCOL.md">docs/PROTOCOL.md</a></p></div>
+    <div class="card"><h3>How you know yours is correct</h3><p>Conformance vectors, published and checked in CI against the reference implementation: for a fixed round and a fixed test key, thirty-two consecutive walk states with their branch indices, a complete walk with its checkpoint chain and Merkle root, three segment openings, and the exact signed bytes of every message type. Run them and you know before you join. <a href="https://github.com/iotexproject/rhonet/blob/main/spec/vectors.json">spec/vectors.json</a></p></div>
+    <div class="card"><h3>How the competition is scored</h3><p>The board shows the hardware alongside the credit, so a faster implementation is visible as well as credited. There is no approval step and no whitelist: a client is legitimate if its points replay, checked the same way for everyone, including us. If the standing record is still Python, the round is telling you something.</p></div>
   </div>
 </section>
 
@@ -279,7 +283,8 @@ python3 -m venv .venv &amp;&amp; .venv/bin/pip install fastapi <span class="p">'
     <table>
       <thead><tr><th>Target</th><th class="r">Expected steps</th><th>Prize</th><th class="r">1,000 GPUs</th><th>Status</th></tr></thead>
       <tbody>
-        <tr><td>Certicom ECCp-109</td><td class="r num">3.2e16</td><td>solved 2002 by 10,308 volunteers</td><td class="r num">~13 min</td><td>calibration rerun</td></tr>
+        <tr><td>Certicom ECCp-97</td><td class="r num">4.2e14</td><td>solved 1998 by 588 volunteers</td><td class="r num">~10 s</td><td><span style="color:var(--accent)">open now</span></td></tr>
+        <tr><td>Certicom ECCp-109</td><td class="r num">3.2e16</td><td>solved 2002 by 10,308 volunteers</td><td class="r num">~13 min</td><td>skipped</td></tr>
         <tr><td>Certicom ECCp-131</td><td class="r num">6.5e19</td><td>$20,000, open since 1997</td><td class="r num">~19 days</td><td>first public round</td></tr>
         <tr><td>Bitcoin puzzle #140</td><td class="r num">1.7e21</td><td>14 BTC, bearer</td><td class="r num">~480 days</td><td>needs a kangaroo walk</td></tr>
         <tr><td>Certicom ECCp-163</td><td class="r num">4.3e24</td><td>$30,000</td><td class="r num">~3,400 years</td><td>out of reach</td></tr>
@@ -322,8 +327,9 @@ python3 -m venv .venv &amp;&amp; .venv/bin/pip install fastapi <span class="p">'
 <section id="status">
   <div class="shead"><h2>Status</h2><span class="rule"></span><span class="note">read this before sending anyone money</span></div>
   <div class="notice">
-    <b>Demonstrator. Nothing here should hold funds yet.</b>
-    <p>Two independent reviews have been run against this code and both are published in full, with reproductions, in the repository. The second found a release blocker that the first round of fixes had itself introduced, and it is now closed: verification costs 0.027% of the search rather than 100% of it. No public round has been opened and no prize has ever been settled on chain. Before ECCp-131 can start we still need a GPU kernel for the 131-bit field and a measurement of its real throughput, the number the whole schedule above depends on. Findings and fixes: <a href="https://github.com/iotexproject/rhonet/blob/main/review/2026-09-08-external-review.md">review/2026-09-08-external-review.md</a>.</p>
+    <b>Exercise 97 is a calibration round. No prize, and nothing here should hold funds yet.</b>
+    <p>ECCp-97 was solved in March 1998 and the answer has been public ever since, so this round can check its own result: when the network reports a collision, the discrete logarithm it derives has to equal the number published then. That is the whole reason to run a solved problem first. Knowing the answer earns nobody credit — points are paid for walks that replay from a PRF nobody controls — and there is a test for exactly that.</p>
+    <p>Two independent reviews have been run against this code and both are published in full, with reproductions, in the repository. The second found a release blocker that the first round of fixes had itself introduced, and it is now closed: verification costs a fraction of a percent of the search rather than all of it. No prize has ever been settled on chain, and no contract has been deployed. Before ECCp-131 can start we still need a GPU kernel for the 131-bit field and a measurement of its real throughput, the number the whole schedule above depends on — which is the open invitation on this page, not a footnote to it. Findings and fixes: <a href="https://github.com/iotexproject/rhonet/blob/main/review/2026-09-08-external-review.md">review/2026-09-08-external-review.md</a>.</p>
 </div>
 </section>
 
@@ -334,6 +340,86 @@ python3 -m venv .venv &amp;&amp; .venv/bin/pip install fastapi <span class="p">'
 </main>
 
 <script>
+// Live board. The page above is already true and readable with no network at
+// all -- it describes the round and shows the last completed one -- and this
+// only upgrades it when the coordinator answers. A failed fetch changes nothing,
+// which is why nothing here is left blank waiting on a response.
+(() => {
+  const API = "https://api.rhonet.dev";
+  const $ = id => document.getElementById(id);
+  const num = (n, d = 0) => n.toLocaleString("en-US", {minimumFractionDigits: d, maximumFractionDigits: d});
+  const si = n => {
+    if (!isFinite(n) || n <= 0) return "0";
+    const u = ["", "K", "M", "G", "T", "P"]; let i = 0;
+    while (n >= 1000 && i < u.length - 1) { n /= 1000; i++; }
+    return n.toFixed(n < 10 && i ? 1 : 0) + u[i];
+  };
+  const esc = t => String(t).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+  async function tick() {
+    let status, board;
+    try {
+      const [a, b] = await Promise.all([fetch(API + "/api/status"), fetch(API + "/api/contributors")]);
+      if (!a.ok || !b.ok) return;
+      status = await a.json(); board = await b.json();
+    } catch { return; }            // offline, or no round open: leave the page as written
+    if (!status || !status.round) return;
+
+    const open = status.status === "open";
+    $("s-dot").style.background = open ? "var(--accent)" : "var(--faint)";
+    $("s-round").innerHTML = '<span class="dot" style="background:' + (open ? "var(--accent)" : "var(--faint)") +
+      '"></span>' + esc(status.round.round_id) + (open ? "" : ' <small>' + esc(status.status) + "</small>");
+    const pct = (status.progress_executed || 0) * 100;
+    $("s-progress").innerHTML = num(pct, 1) + '<small>% of expected</small>';
+    $("s-rate").innerHTML = si(status.steps_per_sec || 0) + "<small>steps/s</small>";
+    $("s-people").innerHTML = num(status.active_contributors || 0) +
+      '<small>' + num(status.dps || 0) + " points</small>";
+    const cost = status.verification_replay_steps && status.total_executed_steps
+      ? 100 * status.verification_replay_steps / status.total_executed_steps : null;
+    if (cost !== null) $("s-cost").innerHTML = cost.toFixed(3) + "%<small>of search</small>";
+
+    if (!Array.isArray(board) || !board.length) return;
+    const unit = Math.pow(2, status.round.credit_unit_log2);
+    const live = board.filter(r => r.status === "active");
+    const total = live.reduce((t, r) => t + r.credited_steps, 0) || 1;
+    const top = Math.max(...live.map(r => r.credited_steps), 1);
+    $("b-title").innerHTML = esc(status.round.round_id) +
+      ' <span style="color:var(--faint);font-weight:400">· ' + esc(status.status) + "</span>";
+    $("b-sub").textContent = status.round.bits + "-bit curve · " + num(status.dps || 0) +
+      " points · epoch " + num(status.epoch || 0) + " · no prize, this round is an exercise";
+    $("b-body").innerHTML = board.map((r, i) => {
+      const out = r.status !== "active";
+      const credits = r.credited_steps / unit;
+      const share = out ? 0 : 100 * r.credited_steps / total;
+      const who = r.github
+        ? '<a href="https://github.com/' + esc(r.github) + '">' + esc(r.github) + "</a>"
+        : "unregistered key " + esc(r.pubkey.slice(0, 8)) + "\u2026";
+      const tag = out ? ' <span class="tag">' + esc(r.status) + "</span>" : "";
+      const note = out ? esc(r.note || "removed from the round")
+                       : esc(r.device || "hardware not reported");
+      return '<tr' + (out ? ' class="out"' : "") + '><td class="rk' + (i === 0 && !out ? " top" : "") + '">' +
+        (out ? "&mdash;" : String(i + 1).padStart(2, "0")) + '</td>' +
+        '<td class="who">' + who + tag + '<span class="sub2">' + note + "</span></td>" +
+        '<td class="r num">' + num(credits, 3) + "</td>" +
+        '<td class="r"><span class="share"><span class="meter">' +
+          (out ? "" : '<i style="width:' + (100 * r.credited_steps / top).toFixed(0) + '%"></i>') +
+        '</span><span class="num">' + num(share, 1) + "%</span></span></td>" +
+        '<td class="r num">' + num(r.dps || 0) + "</td>" +
+        '<td class="r num">' + num(r.spot_checks || 0) + " \u2713</td></tr>";
+    }).join("");
+    $("b-foot").innerHTML = "Live from the coordinator, refreshed every fifteen seconds. " +
+      "A login appears only if its holder opened a pull request binding that GitHub account to its key; " +
+      "an unregistered key is shown as a key, never as somebody's account. Hardware is self-reported by the " +
+      "walker and is not measured. Credit is verified work: one credit is 2<sup>" +
+      status.round.credit_unit_log2 + "</sup> steps, and a point counts only once its audit challenge has been " +
+      'answered. Every epoch\u2019s audit is published and re-derived in CI: ' +
+      '<a href="https://github.com/iotexproject/rhonet/tree/main/public/epochs">public/epochs</a>.';
+    $("b-note").textContent = "live · " + num(status.active_contributors || 0) + " searching";
+  }
+  tick();
+  setInterval(tick, 15000);
+})();
+
 // Walkers wander the curve until two of them land on the same point.
 // That meeting is the entire product, so it is the only thing that animates.
 (() => {

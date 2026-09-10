@@ -213,5 +213,31 @@ class BeaconTests(unittest.TestCase):
             self.assertEqual(fetch.call_count, 2)
 
 
+    def test_drand_shape_and_a_constant_beacon_is_refused(self):
+        """drand puts the value under "randomness", and a value that never changes
+        is not a beacon: the audit would be predictable, so the epoch stays open."""
+        with patch.dict(os.environ, RHONET_BEACON_URL='https://api.drand.sh/public/latest'):
+            coord = self.make_coord('drand')
+        coord.started_at = self.coord.started_at
+        # drand's /info also carries a "hash" -- the chain identifier, a constant.
+        # Reading it in preference to "randomness" would be a silent downgrade.
+        body = {'round': 1, 'randomness': 'ab' * 32, 'hash': 'cd' * 32}
+        with patch('rhonet.coordinator.urlopen') as fetch:
+            fetch.side_effect = lambda *a, **kw: BytesIO(json.dumps(body).encode())
+            self.clock.return_value = coord.started_at + self.spec.epoch_seconds + 1
+            coord.close_epoch()
+            self.assertEqual(coord.beacon_for(0), bytes.fromhex('ab' * 32))
+            # The same value again in the next epoch must not be accepted.
+            self.clock.return_value = coord.started_at + 2 * self.spec.epoch_seconds + 1
+            with self.assertRaises(ValueError) as exc:
+                coord.close_epoch()
+            self.assertIn('repeated', str(exc.exception))
+            self.assertFalse(next(e for e in coord.epochs_view() if e['idx'] == 1)['audit_complete'])
+            # A fresh value closes it.
+            body['randomness'] = 'ef' * 32
+            coord.close_epoch()
+            self.assertEqual(coord.beacon_for(1), bytes.fromhex('ef' * 32))
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)

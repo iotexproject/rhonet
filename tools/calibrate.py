@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import itertools
 import multiprocessing as mp
 import os
 import statistics
@@ -33,7 +34,7 @@ from rhonet import ec, gencurve
 
 def solve_once(args):
     """One instance: fresh curve, fresh secret, rho to a collision. Returns steps."""
-    bits, index, w, r, seed = args
+    bits, index, w, r, seed, batch = args
     curve = gencurve.gen(bits)
     k = 1 + (int.from_bytes(ec.H("calibrate", seed, index, "k"), "big") % (curve.n - 1))
     Q = curve.mul(k, curve.G)
@@ -44,50 +45,45 @@ def solve_once(args):
         max_walk_len_log2=min(w + 6, w + 3), v=max(1, min(12, w - 6)))
     table = ec.walk_table(spec)
 
-    seen: dict[int, tuple[int, int, int]] = {}
-    steps = 0
-    identifier = 0
-    limit = int(40 * math.isqrt(curve.n) + 1000)
-    while steps < limit:
-        a, b, point = ec.derive_start(spec, "00" * 32, identifier)
-        identifier += 1
-        if point is ec.INF:
-            continue
-        walked = 0
-        cap = 1 << spec.max_walk_len_log2
-        while walked < cap:
-            result = ec.replay(spec, table, a, b, point, 1)
-            if result is None:
-                break
-            a, b, point = result
-            walked += 1
-            steps += 1
-            if point is ec.INF:
-                break
-            x = point[0]
-            if x & ((1 << w) - 1):
-                continue
-            previous = seen.get(x)
+    # Use the batched kernel, not one replay() call per step: the whole point of
+    # this measurement is to run enough instances that the mean is tight, and a
+    # five-times-slower stepper buys nothing but wall clock.
+    #
+    # But B walks in flight cost about B/(2*theta) wasted steps when the collision
+    # lands, because every unfinished walk is thrown away. That overhead is additive
+    # and vanishes against sqrt(n) as n grows -- at 97 bits with B = 32 it is 0.002%
+    # -- while at 28 bits with B = 32 it is a fifth of the whole measurement. Left
+    # unaccounted it would make the constant look like 1.58 and the exponent still
+    # look like 0.5, which is exactly the kind of wrong number this tool exists to
+    # avoid. So cap B at 1% of the expected work for the size actually being run.
+    root = math.isqrt(curve.n)
+    batch = max(1, min(batch, int(0.0125 * root / (1 << max(0, w - 1)))))
+    walker = ec.BatchWalker(spec, table, "00" * 32, batch, itertools.count().__next__)
+    seen: dict[int, dict] = {}
+    limit = int(40 * root + 1000)
+    while walker.steps_done < limit:
+        for dp in walker.step():
+            # The chain is not needed here and would otherwise accumulate for every
+            # walk ever started: tens of thousands of them at the larger sizes.
+            walker.checkpoints.pop(dp["t"], None)
+            previous = seen.get(dp["x"])
             if previous is None:
-                seen[x] = (a, b, point[1])
-                break
-            pa, pb, py = previous
-            found = ec.solve_collision(
-                spec, {"a": a, "b": b, "x": x, "y": point[1]},
-                {"a": pa, "b": pb, "x": x, "y": py})
+                seen[dp["x"]] = dp
+                continue
+            found = ec.solve_collision(spec, dp, previous)
             if found is None:
-                break  # a walk met itself: no information, keep going
+                continue  # a walk met itself, or the two coefficients cancel
             if found != k:
-                return {"bits": bits, "index": index, "error": "wrong k", "steps": steps}
-            return {"bits": bits, "index": index, "steps": steps,
-                    "sqrt_n": math.isqrt(curve.n), "ratio": steps / math.isqrt(curve.n)}
-        else:
-            continue
-    return {"bits": bits, "index": index, "error": "gave up", "steps": steps}
+                return {"bits": bits, "index": index, "error": "wrong k",
+                        "steps": walker.steps_done}
+            return {"bits": bits, "index": index, "steps": walker.steps_done,
+                    "sqrt_n": root, "batch": batch,
+                    "ratio": walker.steps_done / root}
+    return {"bits": bits, "index": index, "error": "gave up", "steps": walker.steps_done}
 
 
-def arm(bits, solves, procs, w, r, seed):
-    tasks = [(bits, i, w or max(6, bits // 4), r, seed) for i in range(solves)]
+def arm(bits, solves, procs, w, r, seed, batch):
+    tasks = [(bits, i, w or max(6, bits // 4), r, seed, batch) for i in range(solves)]
     started = time.time()
     with mp.get_context("fork").Pool(procs) as pool:
         results = pool.map(solve_once, tasks)
@@ -99,6 +95,7 @@ def arm(bits, solves, procs, w, r, seed):
     sd = statistics.stdev(ratios) if len(ratios) > 1 else 0.0
     stderr = sd / math.sqrt(len(ratios))
     return {"bits": bits, "solves": len(ratios), "failed": len(bad),
+            "batch": max((x.get("batch", 0) for x in results if "ratio" in x), default=0),
             "mean_ratio": mean, "sd_ratio": sd,
             "mean_3sigma": [mean - 3 * stderr, mean + 3 * stderr],
             "p10": sorted(ratios)[max(0, len(ratios) // 10 - 1)],
@@ -115,17 +112,19 @@ def main(argv=None):
     ap.add_argument("--w", type=int, default=None, help="DP width (default bits//4)")
     ap.add_argument("--r", type=int, default=32)
     ap.add_argument("--seed", default="v1")
+    ap.add_argument("--batch", type=int, default=32,
+                    help="walks in lock-step per instance; amortises the inversion")
     ap.add_argument("--out", default=None)
     args = ap.parse_args(argv)
 
     arms = []
     for bits in [int(b) for b in args.bits.split(",")]:
-        result = arm(bits, args.solves, args.procs, args.w, args.r, args.seed)
+        result = arm(bits, args.solves, args.procs, args.w, args.r, args.seed, args.batch)
         arms.append(result)
         print(f"{bits:3d} bits  n={result['solves']:4d}  mean {result['mean_ratio']:.3f}"
               f"  sd {result['sd_ratio']:.3f}"
               f"  3sigma [{result['mean_3sigma'][0]:.3f}, {result['mean_3sigma'][1]:.3f}]"
-              f"  p10-p90 {result['p10']:.2f}-{result['p90']:.2f}"
+              f"  p10-p90 {result['p10']:.2f}-{result['p90']:.2f}  B={result['batch']}"
               f"  {result['seconds']:.0f}s", flush=True)
 
     if len(arms) > 1:

@@ -1215,14 +1215,14 @@ class Coordinator:
             "progress": total / spec.expected_steps,  # Legacy payment-accounting ratio.
             "progress_executed": work["total_executed_steps"] / spec.expected_steps,
             "dps": n_dps,
-            "miners": n_miners,
-            "active_miners": n_active or 0,
+            "contributors": n_miners,
+            "active_contributors": n_active or 0,
             "slashed": slashed,
             "spot_checks": checks,
             "steps_per_sec": rate,
             "eta": eta,
             "eta_seconds": eta["median_remaining_seconds"],
-            "last_epoch": None if not last_epoch else {"idx": last_epoch[0], "root": "0x" + last_epoch[1], "ts": last_epoch[2], "total_steps": last_epoch[3], "miners": last_epoch[4]},
+            "last_epoch": None if not last_epoch else {"idx": last_epoch[0], "root": "0x" + last_epoch[1], "ts": last_epoch[2], "total_steps": last_epoch[3], "contributors": last_epoch[4]},
             "solution": self._get_state("solution"),
         }
 

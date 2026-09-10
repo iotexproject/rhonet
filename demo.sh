@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# End-to-end demo: fresh 56-bit round, coordinator, 3 honest miners + 2 adversaries.
+# End-to-end demo: fresh 56-bit round, coordinator, 3 honest walkers + 2 adversaries.
 # Ends when the round is solved; checks k against the generator's secret.
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -37,7 +37,7 @@ $PY -m rhonet.walker --coordinator "http://127.0.0.1:$PORT" --key data/carol.key
 MINERS+=("$!")
 while true; do
   S=$(curl -sf "http://127.0.0.1:$PORT/api/status" || echo '{}')
-  ST=$($PY -c "import json,sys; d=json.loads(sys.argv[1]); print(d.get('status','?'), f\"{d.get('progress',0)*100:.0f}%\", f\"{d.get('steps_per_sec',0)/1e6:.2f}M steps/s\", d.get('dps',0), 'DPs', d.get('active_miners',0), 'active', d.get('slashed',0), 'slashed')" "$S")
+  ST=$($PY -c "import json,sys; d=json.loads(sys.argv[1]); print(d.get('status','?'), f\"{d.get('progress',0)*100:.0f}%\", f\"{d.get('steps_per_sec',0)/1e6:.2f}M steps/s\", d.get('dps',0), 'DPs', d.get('active_contributors',0), 'active', d.get('slashed',0), 'slashed')" "$S")
   echo "  $ST"
   case "$ST" in solved*) break;; esac
   sleep 5

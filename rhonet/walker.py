@@ -173,7 +173,7 @@ def fmt(n: float) -> str:
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--coordinator", default="http://127.0.0.1:8642")
-    ap.add_argument("--key", default="miner.key")
+    ap.add_argument("--key", default="walker.key")
     ap.add_argument("--payout", default=None, help="20-byte hex address credits are settled to")
     ap.add_argument("--procs", type=int, default=max(1, (os.cpu_count() or 2) // 2))
     ap.add_argument("--batch", type=int, default=64)

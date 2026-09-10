@@ -89,9 +89,12 @@ jobs:
 
   live:
     name: deployed site matches this repository
-    # Not a gate on deploying: it reports on what is already served. It goes red
-    # when the apex drifts from main, which is the alarm that was missing.
-    if: github.event_name != 'pull_request'
+    # The drift alarm. It does not run on push, because on a push it would check
+    # the apex before this commit's deploy has replaced it and go red for a second.
+    # A push is covered by the deploy job's own post-deploy check below; this one
+    # catches the case that actually hurt: a pipeline that quietly stopped working
+    # and nobody noticed for two review cycles.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -141,12 +144,15 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: npx --yes wrangler@latest deploy
-      - name: Confirm the live site is serving this commit's page
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - name: Confirm the apex now serves exactly this commit's page
+        # Not "did a page come back" -- that passed for two review cycles while the
+        # apex served a build two revisions old. This compares byte for byte.
         run: |
           for i in $(seq 1 12); do
-            body=$(curl -fsS https://rhonet.dev/ || true)
-            title=$(printf '%s' "$body" | grep -o '<title>[^<]*</title>' || true)
-            if [ -n "$title" ]; then echo "live: $title"; exit 0; fi
-            sleep 5
+            if python -m tools.check_live; then exit 0; fi
+            echo "not yet propagated; retrying"
+            sleep 10
           done
-          echo "::error::rhonet.dev did not serve a page after the deploy"; exit 1
+          echo "::error::rhonet.dev is not serving this commit after the deploy"; exit 1

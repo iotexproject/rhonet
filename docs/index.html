@@ -183,8 +183,8 @@ footer{margin-top:72px;padding-top:18px;border-top:1px solid var(--line);color:v
     <a class="cta" href="#board" style="margin-left:8px">See the board</a>
   </div>
 
-  <p class="lede" id="state" style="font-size:14.5px;font-family:var(--mono);color:var(--faint);margin-top:30px;max-width:74ch">
-    <b style="color:var(--ink);font-weight:500">Status: opening.</b> The coordinator is not serving yet, so the round cannot be joined today.
+  <p class="lede" id="state" style="font-size:14.5px;color:var(--muted);margin-top:30px;max-width:72ch">
+    <b class="mono" style="color:var(--ink);font-weight:600">Status: opening.</b> The coordinator is not serving yet, so the round cannot be joined today.
     What is published is everything needed to be ready for it: the curve and its provenance, every round parameter with its
     reasoning, the wire specification, and conformance vectors a client can check itself against before it ever connects.
     This line, and the board below, become live figures the moment the coordinator answers.
@@ -381,7 +381,7 @@ python3 -m venv .venv &amp;&amp; .venv/bin/pip install fastapi <span class="p">'
 
     const open = status.status === "open";
     const state = $("state");
-    if (state) state.innerHTML = '<b style="color:var(--ink);font-weight:500">Status: ' +
+    if (state) state.innerHTML = '<b class="mono" style="color:var(--ink);font-weight:600">Status: ' +
       esc(status.status) + '.</b> ' + num(status.dps || 0) + ' points submitted, ' +
       num(status.active_contributors || 0) + ' contributor' +
       ((status.active_contributors === 1) ? '' : 's') + ' searching, ' +

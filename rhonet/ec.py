@@ -231,6 +231,12 @@ class RoundSpec:
     silence_epochs: int = 3
     settlement_sweep_seconds: float = 0.1
     funded: bool = False
+    # The negation map is a property of the round, not of a client. It changes the
+    # step function -- a class-based walk over {P, -P} -- so a client that adopts it
+    # unilaterally walks a different function, fails replay, and is slashed for a
+    # correct implementation of the wrong protocol. Declared here so that fact is
+    # machine-checkable rather than a convention nobody wrote down.
+    negation_map: bool = False
 
     @property
     def segments_per_walk(self):
@@ -301,6 +307,14 @@ class RoundSpec:
             raise ValueError("invalid audit maturity parameters")
         if type(self.funded) is not bool:
             raise ValueError("funded must be boolean")
+        if type(self.negation_map) is not bool:
+            raise ValueError("negation_map must be boolean")
+        if self.negation_map:
+            raise ValueError(
+                "negation_map is not implemented. A round that enables it must also "
+                "specify the canonicalisation and the fruitless-cycle escape rule in "
+                "docs/PROTOCOL.md and regenerate spec/vectors.json, or two clients will "
+                "disagree about a step and one will be slashed for it.")
         if self.w < 1:
             raise ValueError("w must be >= 1")
         if self.r < 2 or self.r & (self.r - 1):
@@ -358,6 +372,7 @@ class RoundSpec:
             silence_epochs=int(d.get("silence_epochs", 3)),
             settlement_sweep_seconds=float(d.get("settlement_sweep_seconds", .1)),
             funded=d.get("funded", False),
+            negation_map=d.get("negation_map", False),
             round_id=d["round_id"],
             curve=Curve.from_dict(d["curve"]),
             qx=int(d["qx"]),

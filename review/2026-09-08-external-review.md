@@ -512,3 +512,47 @@ the audit stays cheap when submissions are adversarial rather than cooperative, 
 hour-long epoch is the right unit for people whose machines sleep, and whether the board is
 something a contributor recognises as their own work. None of those can be tested alone,
 which is the argument for running an exercise with no money on it before running one with.
+
+---
+
+# Third-round review, 10 September 2026
+
+The final review in the series. It confirmed eight of the nine second-round findings
+fixed, withdrew one on the merits (`r = 32`), and filed ten more — none of them
+cryptographic or economic. Twenty-six findings in the first round, nine in the
+second, zero design defects in the third.
+
+It credited three things as beyond what was asked: the wire specification with
+machine-checked vectors, parameter justification that publishes its own weak case
+as a table, and the two rehearsal-driven fixes. Its judgement on the last is worth
+recording verbatim, because it is the process lesson rather than a code one:
+
+> Both are the class of defect that only appears under load. […] worth more as
+> evidence of process than any individual line of code, because they show the
+> system being run rather than reasoned about.
+
+| ID | Severity | Finding | Status |
+|---|---|---|---|
+| F-1 | blocker | The site advertised a round as open while `api.rhonet.dev` did not resolve. A volunteer following the published steps fails at the first network call. | fixed: one machine-readable `rhonet-round-state`, honest "opening" copy, `tools/check_live.py` in CI, and a client that says which side is broken |
+| F-2 | high, repeat | The apex has served a build two revisions old for two review cycles, carrying two retracted claims and silent about the project's biggest repair. | guarded, not yet fixed: `check_live` names exactly what drifted and runs daily. The deploy is blocked on a Cloudflare token |
+| F-3 | high | ECCp-109 was marked *skipped*, leaving a 1.5 × 10⁵ extrapolation from Exercise 97 to the flagship. | fixed: restored as a rung gated on the fast client, with its purpose stated |
+| F-4 | medium | The site described the retracted settlement design as a present residual, two sections above the evidence it was fixed. | fixed, and grepped for |
+| F-5 | medium | The README documented a superseded contract, advertising as outstanding the per-epoch gas regression that was already fixed. | fixed, and grepped for |
+| F-6 | medium | The broken-chain bound was quoted from the walk-length cap (4,096 segments) rather than the expected walk (512), understating our own mechanism eightfold. | fixed: both quoted, and recomputed from the round in CI |
+| F-7 | medium | Slow start doubled from a CPU-sized base, idling the first fast client for nine hours. | fixed: the quota also tracks accepted work; capacity hints report the ceiling and its source |
+| F-8 | low, carried | The calibration ladder stopped at 48 bits. | `tools/calibrate.py` committed; 56- and 64-bit arms measured |
+| F-9 | low, carried | No beacon-aware adversary in the test suite. | fixed: `tests/test_beacon_aware_adversary.py` |
+| F-10 | low | Residual inconsistencies; `r = 32` withdrawn on the merits. | resolved by F-2 and F-6 |
+
+**One correction to the review.** F-1 states the failure "comes after the client has
+minted an admission ticket". It does not: the client fetches `/api/round` before
+minting, so the work was never spent. What it did was fail with a Python traceback,
+which leaves a volunteer just as unable to tell a project-side outage from their own
+mistake. The proposed fix was right for the wrong reason, and is implemented.
+
+**The lesson worth keeping.** The recurring defect in this project is no longer in
+the protocol; it is that the README, the served site and the contract header
+disagree about what the system does. That appeared three times in one review. It is
+now a test: `tests/test_published_numbers.py` recomputes every published figure from
+`rounds/eccp97.json` and fails the build on any phrase this project has retracted.
+Prose that quotes a parameter is code that can rot, and it should be treated as code.

@@ -37,3 +37,23 @@ CLOUDFLARE_ACCOUNT_ID=<account> npx wrangler deploy
 `wrangler.jsonc` publishes the `docs/` directory as static assets on the `rhonet`
 Worker, bound to `rhonet.dev` and `www.rhonet.dev` as custom domains. Nothing in
 `rhonet/`, `contracts/` or `public/` is served; the coordinator is not hosted here.
+
+
+## Why this is not just a nice-to-have
+
+Until the token exists, `rhonet.dev` serves whatever it last served — currently a build
+from before the verification-cost work, carrying two claims this project has since
+retracted. That survived two review cycles because nothing checked it.
+
+`tools/check_live.py` now does, on every push and once a day:
+
+    python -m tools.check_live
+
+It compares the served apex against `docs/index.html` and names what drifted, and it
+refuses to let the page claim a round is open while `api.rhonet.dev` does not answer.
+The `live` job in CI is red today, correctly, and turns green the moment the deploy
+runs. Do not silence it; it is the only thing standing between a deploy pipeline that
+has stopped working and nobody noticing for a month.
+
+The current build is on the GitHub Pages mirror at
+<https://iotexproject.github.io/rhonet>, which deploys from `docs/` without a token.

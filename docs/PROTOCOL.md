@@ -37,6 +37,7 @@ A round is a static JSON document, published once and never mutated. Fields:
 | `audit_response_seconds` | how long you have to answer a challenge |
 | `silence_epochs` | unanswered challenges in this many epochs costs the identity its standing |
 | `prize_pool_usdc`, `funded` | the prize, and whether it is actually escrowed |
+| `negation_map` | whether the walk runs over `{P, −P}` classes. Always `false` today; a round that sets it changes the step function for everyone, and the vectors with it |
 
 A client should reject a round it cannot validate: `p` and `n` prime, the curve
 nonsingular, `G` on the curve with `n·G = ∞`, `Q` on the curve with `n·Q = ∞`, `n`
@@ -103,6 +104,13 @@ no credit, if it reaches `min(2^max_walk_len_log2, 2^(w+3))` steps or degenerate
 
 `spec/vectors.json → trace` gives 32 consecutive states from a known start,
 including the branch index taken at each one.
+
+**This step function is the whole contract, and it is not negotiable.** In
+particular, do not add the negation map. Canonicalising a point to `min(y, p − y)`
+before stepping is a well-known 1.41× and it changes the function: your walk would
+no longer be the round's walk, your submissions would not replay, and the audit
+would slash you for a correct implementation of a different protocol. If a round
+enables it, the round document says so and the vectors change with it.
 
 ## 6. Checkpoints and the commitment
 

@@ -14,8 +14,21 @@ expects
 
     1.25 · √n  ≈  4.21 × 10¹⁴ steps
 
-A client that implements the negation map does about 0.886·√n ≈ 2.98 × 10¹⁴, a
-1.41× saving. The reference client does not implement it; a better client should.
+A walk that used the negation map would do about 0.886·√n ≈ 2.98 × 10¹⁴, a 1.41×
+saving. **Exercise 97 does not use it, and a client must not adopt it on its own.**
+
+This is worth being blunt about, because the obvious reading is wrong. The negation
+map is not a client optimisation like a faster field multiplication; it changes the
+step function. A client that canonicalises each point to `min(y, p − y)` before
+stepping is walking a different pseudorandom function from everyone else, so its
+submissions will not replay against the round's definition and the audit will slash
+it for a correct implementation of the wrong walk. It is a round parameter, uniform
+by construction, and this round does not set it.
+
+Enabling it in a later round means specifying more than the canonicalisation: a
+class-based walk enters short fruitless cycles, and the escape rule for those has to
+be part of the wire specification and the conformance vectors, or two clients will
+disagree about a step and one of them will be slashed for it.
 
 Rho is a random process, not a schedule. Completion follows a Rayleigh
 distribution: there is a 10% chance of finishing by 0.37× the expected work, a 50%

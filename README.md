@@ -8,7 +8,12 @@ A walker is one Pollard rho path on a curve. RhoNet is a crowd of them: anyone w
 GPU points it at a round, wanders the curve, and when any two walkers collide the whole crowd
 is paid pro rata for the work it actually did.
 
-Site: <https://rhonet.dev> · Board: <https://api.rhonet.dev/api/status> · Status: **Exercise 97 is specified and opening** — the coordinator is not serving yet
+Site: <https://iotexproject.github.io/rhonet> · Status: **Exercise 97 is specified and opening**
+
+> `rhonet.dev` is serving a stale build and `api.rhonet.dev` does not resolve yet; both are
+> blocked on a Cloudflare API token, and `tools/check_live.py` runs daily to say so rather
+> than let it pass quietly. The GitHub Pages mirror above is current with `main`. The board
+> will be at `https://api.rhonet.dev/api/status` when the round opens.
 
 ---
 
@@ -234,7 +239,9 @@ worked example that CI checks against the reference implementation on every push
    against a result we can check. *(specified and opening — you are here)*
 3. **A faster client.** The reference implementation is Python at ~0.7 M steps/s per core.
    A C or Metal or CUDA kernel with batched Montgomery inversion should be worth ten to
-   thirty times that, and the negation map another 1.41×. We are not writing it: the
+   thirty times that. (The negation map's 1.41× is *not* available to a client: it
+   changes the step function, so adopting it unilaterally fails replay. It is a round
+   parameter, and Exercise 97 does not set it.) We are not writing the kernel: the
    specification and the vectors are published so somebody else can, and the board shows the
    hardware next to the credit so a better client is visible as well as credited.
 4. **ECCp-109**, gated on that kernel. Not a record to redo — it fell in 2002 to 10,308

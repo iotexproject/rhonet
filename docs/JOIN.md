@@ -159,8 +159,14 @@ This is the part we care about most.
 The reference implementation is Python. It does 0.7–0.8 M steps per second per
 core, and there is no scenario in which that is a good number. A C or Metal or CUDA
 kernel doing batched Montgomery-trick inversions across many walks should be worth
-ten to thirty times that, and implementing the negation map is another 1.41× on top
-— the reference client does not implement it.
+ten to thirty times that.
+
+What is *not* available to you is the negation map, the other well-known 1.41×. It
+changes the step function rather than the speed of a step, so a client that adopts
+it unilaterally walks a different function from the round, fails replay, and is
+slashed for a correct implementation of the wrong walk. It is a round parameter, and
+this round does not set it. Everything else — the arithmetic, the batching, the
+memory layout, the hardware — is yours.
 
 We are not going to write those kernels. That is the open problem, and it is
 yours if you want it.

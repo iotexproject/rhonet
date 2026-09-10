@@ -65,6 +65,22 @@ class Eccp97Tests(unittest.TestCase):
                         == (forged["x"], forged["y"]))
         self.assertFalse(ec.dp_verify(self.spec, table, pubkey, forged))
 
+    def test_the_walk_is_the_plain_one(self):
+        """The negation map is a round parameter, not a client optimisation.
+
+        A client that canonicalises to min(y, p-y) walks a different function, so
+        its submissions do not replay and the audit slashes it for a correct
+        implementation of the wrong protocol. This round does not enable it, and
+        the spec refuses to load a round that claims to until it is implemented.
+        """
+        self.assertFalse(self.spec.negation_map)
+        self.assertIn("negation_map", self.spec.to_dict())
+        with open(ROUND) as f:
+            claimed = dict(json.load(f), negation_map=True)
+        with self.assertRaises(ValueError) as exc:
+            ec.RoundSpec.from_dict(claimed)
+        self.assertIn("not implemented", str(exc.exception))
+
     def test_round_is_an_unfunded_exercise(self):
         self.assertFalse(self.spec.funded)
         self.assertEqual(self.spec.prize_pool_usdc, 0.0)

@@ -136,7 +136,7 @@ sequence numbers survive, so a captured request still cannot be replayed.
 
 After epochs close, publish them so a third party can re-derive the selection:
 
-    python tools/publish_epochs.py data/exercise-97.sqlite public/epochs
+    python tools/publish_epochs.py --db data/exercise-97.sqlite --out public/epochs
     python tools/verify_audit.py public/epochs      # what CI runs
 
 Commit the result. CI re-derives every published epoch on every push, so a

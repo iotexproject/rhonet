@@ -131,6 +131,15 @@ here it is a list of four integers, so it is `[a,b,x,y]` with commas and no spac
 (This is the one place the protocol still uses JSON in a hash. It is an internal
 digest, never a signature, and the vectors pin it.)
 
+**Budget for this.** A chain is `ceil(L / 2^v) + 1` checkpoints of four field
+elements, and it has to survive until the epoch containing that point has closed.
+On Exercise 97 a typical walk is 513 checkpoints, which is about 33 KB packed as
+four 16-byte integers — trivial for one walk, and 3 GB for a client producing
+100,000 points an hour. A fast client should pack them as fixed-width integers
+rather than language objects, and is free to spill them to disk: they are read once,
+if at all. Discarding them is not an option, because a chain you cannot open is
+credit you cannot collect.
+
 An opening for segment `i` is `{"start": {point, proof}, "end": {point, proof}}`
 where each `proof` is the sibling path from that leaf to the root, exactly
 `ceil(log2(count))` hashes, lowest layer first. Sibling selection when a layer is
@@ -246,8 +255,16 @@ points it submitted in that epoch. Which points, and which segment of each, is
 determined by the epoch's sealed batch commitment and a beacon value that is not
 known until after the batch is sealed.
 
-Poll `GET /api/audit/targets` at least every `audit_response_seconds`. For each
-target, answer with the opening for the named segment.
+Poll `GET /api/audit/targets` at roughly `audit_response_seconds / 10` — prompt
+enough that a challenge is answered long before it expires, slow enough that a
+thousand clients polling is not itself the load. On Exercise 97 that is about every
+twenty seconds. For each target, answer with the opening for the named segment.
+
+Do not poll `/api/status` per request. The epoch is a clock: `started_at` and
+`epoch_seconds` come from the round, so derive it locally and resync only when the
+coordinator answers `400 stale submission`. The reference client used to fetch the
+status before every signed message, which made the most expensive read on the
+server the hottest one.
 
 - A **wrong** answer forfeits the epoch and slashes the identity. Credit already
   matured in earlier epochs is untouched; it was committed.

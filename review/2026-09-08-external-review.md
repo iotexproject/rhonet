@@ -445,3 +445,68 @@ The test suite checks correctness and detection thoroughly and cost not at all, 
 a 2^20 cost regression shipped inside two well-executed security fixes. The single most
 valuable addition to this repository is an assertion that cumulative verification work stays
 below a fixed fraction of cumulative search work.
+
+---
+
+# Launch pass, 9 September 2026
+
+Work done to take the code from "demonstrated on toy curves" to a public round. No
+external reviewer this time; this is our own account of what changed and what did not.
+
+| what | why |
+|---|---|
+| `docs/PROTOCOL.md` + `spec/vectors.json` | An independent client cannot exist without a specification it can check itself against. The vectors are generated from the reference implementation and recomputed back from the file by `tests/test_vectors.py`, so the format can only move in a commit that moves the vectors on purpose. CI runs `--check`. |
+| Real ECCp-97 parameters | The round is Certicom's curve, taken from the 1998 solver's own source. `tests/test_eccp97.py` proves it by the only check that cannot be faked: `k·G = Q` for the published answer. |
+| Round parameters argued in `docs/ROUND-97.md` | Every parameter was previously a number in a JSON file. Each is now a stated trade-off a reviewer can disagree with specifically. |
+| drand beacon, with two guards | The value is read under `randomness`, not `hash` — drand's `/info` carries a constant `hash`, so the obvious parser turns a mistyped URL into a fixed beacon. And a beacon equal to the previous epoch's is refused: whatever the cause, a repeating beacon makes the audit predictable. |
+| Live board, GET-only CORS, `/healthz` | A static leaderboard over a live round would be a lie. The page still renders correctly with no network, so a failed fetch degrades to the truth rather than to a blank. |
+| Client no longer polls `/api/status` per message | The epoch is a clock. Fetching it before every signed message made the most expensive read on the server the hottest one, which would have failed at a few hundred contributors and not before. |
+| Client refuses to invent a payout address | `--payout` defaulted to a random address. A random address is a valid address, so the failure was silent and the work was credited to nobody. It now reads the contributor registry or stops. |
+| `deploy/`, `docs/OPERATIONS.md` | Tunnel, launchd jobs, health probe, and a runbook that spends most of its length on the things that will actually happen rather than on the happy path. |
+
+**What the rehearsal found, which nothing else would have.**
+
+A full run of the production path — the real start script, drand, a tunnel-shaped
+loopback bind, two walkers on a 60-bit round — slashed both honest walkers at 200
+seconds for `silent in 3 audit epochs`. They were not silent. Each epoch produced
+about 256 challenges per identity; `/api/audit/open` shared the submission rate
+limiter at five requests a second, and the response deadline was a flat ten seconds
+regardless of how many openings we had demanded. An honest client had no compliant
+behaviour available to it. The client also treated a `429` on an audit answer as
+final, so it did not even retry into the wall.
+
+Three fixes, and a test for each: the audit answer gets its own generous bucket,
+since the expensive part is the replay and `AUDIT_GATE` already bounds that; the
+deadline is now `audit_response_seconds + challenges_owed / 2` per identity, and
+published in an `audit_window` event so a client can see what it owes; and the
+client retries the answer with the deadline as its budget. `tests/test_audit_window.py`
+fails on all three of the old behaviours.
+
+This is the second time a bug in this project punished an honest contributor rather
+than a dishonest one, and both times the mechanism was the same shape: a limit that
+was reasonable per request became impossible in aggregate, and the penalty for
+failing it was slashing. Any new rule that can slash needs an explicit answer to
+"what does the largest honest contributor have to do to satisfy this, and can it?"
+
+**Still open, and not blocking an unfunded exercise.**
+
+- **R-1 / R-2 are closed for the search, not for settlement.** Steady-state verification is
+  now 0.006% of the search on Exercise 97, asserted by `tests/test_verification_cost.py`.
+  Final settlement still replays every payable point in full, which is affordable at 97 bits
+  and impossible at 131. It has to become a sampled, staged settlement before a funded round.
+- **R-7**: `recoverExcess` still forwards a sponsor's mistaken bare transfer to the operator.
+  No contract is deployed, so nothing is at risk today.
+- **R-8**: the calibration ladder now reaches 48 bits. The 56- and 64-bit arms still crash
+  with an `IndexError` in the harness.
+- **R-9b**: `EcMath` assumes a prime modulus it does not check.
+- **The negation map is not implemented**, costing 1.41×. This is deliberate: it is one of
+  the things a better client should do, and the reference client is not trying to be one.
+- **The dead `T_WINDOW` constant** from R-3 is still there.
+
+**What a first public round is actually testing.** Not whether the mathematics works — 1,200
+calibrated solves settled that. It is testing the parts that only appear with strangers:
+whether a client written by somebody else interoperates from the specification alone, whether
+the audit stays cheap when submissions are adversarial rather than cooperative, whether an
+hour-long epoch is the right unit for people whose machines sleep, and whether the board is
+something a contributor recognises as their own work. None of those can be tested alone,
+which is the argument for running an exercise with no money on it before running one with.

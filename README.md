@@ -8,9 +8,34 @@ A walker is one Pollard rho path on a curve. RhoNet is a crowd of them: anyone w
 GPU points it at a round, wanders the curve, and when any two walkers collide the whole crowd
 is paid pro rata for the work it actually did.
 
-Site: https://rhonet.pages.dev (mirror: https://iotexproject.github.io/rhonet) · Status: **MVP, protocol runs end to end on toy curves**
+Site: <https://rhonet.dev> · Board: <https://api.rhonet.dev/api/status> · Status: **Exercise 97 — Certicom's ECCp-97, the real curve**
 
 ---
+
+## Exercise 97 is open
+
+The current round is Certicom's **ECCp-97** challenge — the original parameters, taken from
+the client that solved it in March 1998 ([provenance](rounds/eccp97.provenance.md)) — about
+**4.2 × 10¹⁴** elliptic-curve steps.
+
+It has no prize, because it has a known answer. That is the reason to run it. When the
+network reports a collision, the discrete logarithm it derives has to equal the number
+published in 1998, so this round checks its own pipeline end to end on a real problem before
+we run one whose answer nobody can check. Knowing the answer earns nobody credit: points are
+paid for walks that replay from a PRF a walker does not control, and
+[`tests/test_eccp97.py`](tests/test_eccp97.py) proves it.
+
+Certicom's own word for the sub-109-bit problems is *exercises*. The parameters are real, the
+difficulty is real, the prize is not.
+
+| | |
+|---|---|
+| **Join** | [docs/JOIN.md](docs/JOIN.md) — register a GitHub identity, run the client, read the board |
+| **Write a client** | [docs/PROTOCOL.md](docs/PROTOCOL.md) + [spec/vectors.json](spec/vectors.json) |
+| **Why these parameters** | [docs/ROUND-97.md](docs/ROUND-97.md) |
+| **Run the coordinator** | [docs/OPERATIONS.md](docs/OPERATIONS.md) |
+
+After this: **ECCp-131**, unsolved since 1997, $20,000, and about 10⁵ times the work.
 
 ## Why
 
@@ -160,34 +185,55 @@ rhonet/gencurve.py     random prime-order curves by BSGS point counting (toy siz
 rhonet/coordinator.py  FastAPI + sqlite: admission, intake, replays, ledger, epochs, API, dashboard
 rhonet/walker.py        identity, ticket, worker processes, signed batches, --cheat
 rhonet/static/         dashboard (single file, no build)
-contracts/                 PrizeVault.sol + forge tests against a Python-generated fixture
-docs/                      project site (GitHub Pages)
-tests/test_ec.py           offline checks
-demo.sh                    end-to-end run
+contracts/             PrizeVault.sol + forge tests against a Python-generated fixture
+rounds/eccp97.json     Exercise 97, with its provenance beside it
+docs/PROTOCOL.md       the wire specification an independent client implements
+spec/vectors.json      conformance vectors, generated and checked in CI
+docs/index.html        the public site, deployed to rhonet.dev by CI
+deploy/                launchd jobs, run script, health probe
+tools/                 contributor registry, epoch publishing, audit re-derivation, vectors
+tests/                 19 test files; every one runs standalone
+demo.sh                end-to-end run: fresh curve, coordinator, honest walkers and forgers
 ```
 
 ## API
 
 ```
+GET  /healthz                      liveness: status, epoch, epochs awaiting close
 GET  /api/round                    round spec
-GET  /api/status                   progress, rate, counts, latest root, solution
-GET  /api/contributors             leaderboard
+GET  /api/status                   progress, rate, counts, latest root, verification cost
+GET  /api/contributors             leaderboard, with GitHub logins and reported hardware
 GET  /api/epochs                   ledger roots
+GET  /api/epochs/{i}/audit         that epoch's audit plan and outcomes
 GET  /api/events                   admissions, replays, slashes, epochs, solve
-GET  /api/proof?payout_addr=0x..   Merkle proof against the latest root
-POST /api/ticket                   {round_id, pubkey, payout_addr, ticket:{nonce,steps,x}, sig}
-POST /api/submit                   {round_id, pubkey, dps:[{x,y,a,b,t,steps}], sig}
+GET  /api/proof?payout_addr=0x..   Merkle proof against an epoch root
+POST /api/ticket                   admission
+POST /api/submit                   distinguished points
+GET  /api/audit/targets?pubkey=..  outstanding challenges
+POST /api/audit/open               answer one
+POST /api/rotate                   change payout address
 ```
+
+Request and response shapes, signed-byte encodings and client obligations are in
+[docs/PROTOCOL.md](docs/PROTOCOL.md); [spec/vectors.json](spec/vectors.json) pins them with a
+worked example that CI checks against the reference implementation on every push.
 
 ## Roadmap
 
-1. **Pre-mine 60–80 bit** rounds on this code to shake out the protocol. *(you are here)*
-2. **GPU kernel** for the 131-bit field (RCKangaroo-class throughput: ~4e10 steps/s on an RTX 5090),
-   negation map, look-ahead against fruitless cycles. Week-0 gate: measure real 131-bit throughput.
-3. **ECCp-109** rerun, first closed then open, to calibrate quotas, replay rate and epoch size.
-4. **ECCp-131**: ~6.5e19 steps at 1.25·√n, roughly 19 days on 1,000 RTX 5090s if the extrapolated
-   rate of 4e10 steps per second per card holds. USDC pool in the vault plus the Certicom prize, which arrives weeks after the
-   answer is submitted and so must be distributable after settlement, under the same root.
+1. **Toy rounds, 28–60 bit**, to shake out the protocol and calibrate the constant. *(done —
+   1,200 solves, and the table above)*
+2. **Exercise 97**: Certicom's real 97-bit curve, ~4.2 × 10¹⁴ steps, no prize and a known
+   answer. Calibrates quotas, epoch size, replay rate and the audit under real contributors,
+   against a result we can check. *(you are here)*
+3. **A faster client.** The reference implementation is Python at ~0.7 M steps/s per core.
+   A C or Metal or CUDA kernel with batched Montgomery inversion should be worth ten to
+   thirty times that, and the negation map another 1.41×. We are not writing it: the
+   specification and the vectors are published so somebody else can, and the board shows the
+   hardware next to the credit so a better client is visible as well as credited.
+4. **ECCp-131**: ~4.6 × 10¹⁹ steps, $20,000 posted by Certicom, open since 1997. Needs the
+   kernel from step 3 and a measurement of its real 131-bit throughput — the number the whole
+   schedule depends on — plus a USDC pool in the vault, and a route for a prize awarded to a
+   named entity to reach a contract that pays strangers.
 5. **v2 coordinator**: staked committee, each member running its own intake bucket, syncing
    only the replayed sample. Needed before a bearer-asset round.
 6. **A bearer-asset round** (a Bitcoin puzzle) needs two things this code does not have: a

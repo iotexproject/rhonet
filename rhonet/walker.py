@@ -14,6 +14,7 @@ import json
 import multiprocessing as mp
 import os
 import queue
+import re
 import random
 import secrets
 import signal
@@ -30,18 +31,23 @@ from . import ec
 RETRYABLE = {429, 503, 502, 504}
 
 
-def retryable_response(response):
+def retryable_response(response, on_stale=None):
     if response.status_code in RETRYABLE:
         return True
     if response.status_code == 400:
         try:
-            return response.json().get("detail") == "stale submission"
+            if response.json().get("detail") == "stale submission":
+                # Our epoch clock disagrees with the coordinator's. Resync before
+                # the retry, or every attempt repeats the same rejected epoch.
+                if on_stale is not None:
+                    on_stale()
+                return True
         except (ValueError, AttributeError):
             pass
     return False
 
 
-def post_with_retry(client, path, build_body, *, budget=300.0, label="request"):
+def post_with_retry(client, path, build_body, *, budget=300.0, label="request", on_stale=None):
     """Rebuild each attempt; return the last response (None on transport exhaustion)."""
     started = time.monotonic()
     backoff = 0.5
@@ -49,7 +55,7 @@ def post_with_retry(client, path, build_body, *, budget=300.0, label="request"):
     while True:
         try:
             response = client.post(path, json=build_body())
-            if not retryable_response(response):
+            if not retryable_response(response, on_stale):
                 return response
             reason = f"rate limited/unavailable ({response.status_code})"
         except httpx.TransportError as exc:
@@ -107,6 +113,32 @@ def detect_device() -> str:
     except Exception:
         pass
     return f"{platform.system()} {platform.machine()}"[:80]
+
+
+def registered_payout(pubkey: str, directory: str = None) -> str | None:
+    """The address this key already registered, if it did.
+
+    Passing --payout every run is easy to get wrong and the failure is silent: a
+    random address is a valid address, so the work is credited to somebody who does
+    not exist. If the key is in the public registry, use what it registered there.
+    """
+    directory = directory or os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "contributors")
+    try:
+        names = sorted(os.listdir(directory))
+    except OSError:
+        return None
+    for name in names:
+        if not name.endswith(".json"):
+            continue
+        try:
+            with open(os.path.join(directory, name)) as f:
+                entry = json.load(f)
+        except (OSError, ValueError):
+            continue
+        if entry.get("pubkey") == pubkey and isinstance(entry.get("payout"), str):
+            return entry["payout"]
+    return None
 
 
 def load_or_create_key(path: str) -> Ed25519PrivateKey:
@@ -186,7 +218,19 @@ def main(argv=None):
 
     key = load_or_create_key(args.key)
     pk = pubkey_hex(key)
-    payout = args.payout or ("0x" + secrets.token_hex(20))
+    payout = args.payout or registered_payout(pk)
+    if payout is None:
+        print("[walker] no --payout, and this key is not in contributors/.\n"
+              "         Credit accrues to an address; inventing a random one would\n"
+              "         quietly pay a stranger. Either pass --payout 0x<address>, or\n"
+              "         register the key first:\n"
+              f"           python -m tools.contributor sign --github <you> --key {args.key} \\\n"
+              "               --payout 0x<address> > contributors/<you>.json\n"
+              "         See docs/JOIN.md.", file=sys.stderr)
+        return 2
+    if not re.fullmatch(r"0x[0-9a-fA-F]{40}", payout):
+        print(f"[walker] --payout must be a 20-byte hex address, got {payout!r}", file=sys.stderr)
+        return 2
     client = httpx.Client(base_url=args.coordinator, timeout=60)
 
     spec_dict = client.get("/api/round").json()
@@ -200,13 +244,31 @@ def main(argv=None):
     print(f"[walker] ticket minted in {time.time()-t0:.1f}s ({ticket['steps']} steps, nonce {ticket['nonce']})", file=sys.stderr)
     # Timestamp seed avoids resetting seq to zero when reusing an identity.
     seq = itertools.count(time.time_ns())
+    # The epoch is a clock, not a fact to be fetched. Asking the coordinator for it
+    # before every signed message doubles the request rate of the whole network and
+    # makes the most expensive read the hottest one. Derive it locally from the
+    # round's own start time, and resync only when the server says we are stale.
+    clock = {"started_at": None, "skew": 0.0}
+    def local_epoch():
+        if clock["started_at"] is None:
+            state = client.get("/api/status").json()
+            if not isinstance(state.get("started_at"), (int, float)):
+                # A coordinator that does not publish its clock still publishes the
+                # epoch. Fall back to asking, rather than guessing and being stale.
+                return max(0, int(state.get("epoch", 0)))
+            clock["started_at"] = state["started_at"]
+            clock["skew"] = state.get("now", time.time()) - time.time()
+        return max(0, int((time.time() + clock["skew"] - clock["started_at"])
+                          // spec.epoch_seconds))
+    def resync():
+        clock["started_at"] = None
     def fresh_body(**fields):
-        epoch = client.get("/api/status").json()["epoch"]
         return signed(key, {"round_id": spec.round_id, "pubkey": pk, **fields,
-                            "epoch": epoch, "seq": next(seq)})
+                            "epoch": local_epoch(), "seq": next(seq)})
 
     r = post_with_retry(client, "/api/ticket",
-                        lambda: fresh_body(payout_addr=payout, ticket=ticket, device=device), label="admission")
+                        lambda: fresh_body(payout_addr=payout, ticket=ticket, device=device),
+                        label="admission", on_stale=resync)
     if r is None or r.status_code != 200:
         print(f"[walker] admission unsuccessful: {r.status_code if r is not None else 'transport failure'}", file=sys.stderr)
         return 2
@@ -222,6 +284,11 @@ def main(argv=None):
 
     checkpoints = {}
     checkpoint_epochs = {}
+    # A tenth of the response window: prompt enough that a challenge is answered
+    # long before it expires, slow enough that a thousand walkers polling this
+    # endpoint is not itself the load. Toy rounds with a ten-second window still
+    # poll about once a second.
+    audit_poll_seconds = max(0.5, min(20.0, spec.audit_response_seconds / 10))
     last_audit_poll = 0.0
     pending, steps_local, sent_dps, credited_steps = [], 0, 0, 0
     steps_pending, abandoned_pending = 0, 0
@@ -234,16 +301,21 @@ def main(argv=None):
     old_term = signal.signal(signal.SIGTERM, shutdown)
     try:
         while True:
-            if time.time() - last_audit_poll >= .5:
+            if time.time() - last_audit_poll >= audit_poll_seconds:
                 try:
                     targets = client.get("/api/audit/targets", params={"pubkey": pk}).json()
                     for target in targets:
                         points = checkpoints.get(target["t"])
-                        if points is not None:
-                            body = signed(key, {"round_id": spec.round_id, "pubkey": pk,
-                                "audit_epoch": target["epoch"], "t": target["t"],
-                                "opening": ec.checkpoint_opening(points, target["segment"])})
-                            client.post("/api/audit/open", json=body)
+                        if points is None:
+                            continue
+                        # An unanswered challenge withholds this epoch's credit and,
+                        # repeated, costs the identity its standing. A rate-limit
+                        # response is not a reason to give up on one.
+                        opening = ec.checkpoint_opening(points, target["segment"])
+                        post_with_retry(client, "/api/audit/open", lambda t=target, o=opening:
+                            signed(key, {"round_id": spec.round_id, "pubkey": pk,
+                                         "audit_epoch": t["epoch"], "t": t["t"], "opening": o}),
+                            budget=max(10.0, target["deadline"] - time.time()), label="audit opening")
                     state = client.get("/api/status").json()
                     matured = {ep["idx"] for ep in state.get("epochs", []) if ep["audit_complete"]}
                     for t in list(checkpoint_epochs):
@@ -275,7 +347,9 @@ def main(argv=None):
                                     "audit_epoch": target["epoch"], "t": target["t"],
                                     "opening": ec.checkpoint_opening(points, target["segment"])})
                                 try:
-                                    client.post("/api/audit/open", json=body)
+                                    post_with_retry(client, "/api/audit/open",
+                                                    lambda b=body: b, budget=15.0,
+                                                    label="audit opening (drain)")
                                     answered += 1
                                 except httpx.HTTPError:
                                     pass
@@ -309,7 +383,8 @@ def main(argv=None):
                 batch = pending[:batch_limit]
                 r = post_with_retry(client, "/api/submit",
                                     lambda: fresh_body(dps=batch, steps_done=steps_pending,
-                                                       abandoned=abandoned_pending), label="submission")
+                                                       abandoned=abandoned_pending),
+                                    label="submission", on_stale=resync)
                 if r is None or retryable_response(r):
                     print("[walker] retaining pending work; will retry submission", file=sys.stderr)
                     last_flush = time.time()

@@ -135,7 +135,10 @@ class TelemetryTests(unittest.TestCase):
 
     def test_parent_submits_signed_deltas_even_without_dps(self):
         client, ctx = Mock(), Mock()
-        client.get.side_effect = lambda url, **kwargs: Mock(json=lambda: [] if url == "/api/audit/targets" else self.spec.to_dict() if url == "/api/round" else {"epoch": 0, "status": "open"})
+        # The client derives the epoch from the round's own clock now, so status
+        # has to carry started_at and now, and is read once rather than per message.
+        state = {"epoch": 0, "status": "open", "started_at": 0, "now": 0, "epochs": []}
+        client.get.side_effect = lambda url, **kwargs: Mock(json=lambda: [] if url == "/api/audit/targets" else self.spec.to_dict() if url == "/api/round" else state)
         ok = Mock(status_code=200)
         ok.json.return_value = {'accepted': 0, 'epoch': 0}
         done = Mock(status_code=200)
@@ -147,7 +150,8 @@ class TelemetryTests(unittest.TestCase):
                 patch.object(walker.mp, 'get_context', return_value=ctx), \
                 patch.object(walker.time, 'time', side_effect=range(100)), \
                 patch.object(sys, 'stderr', new_callable=io.StringIO):
-            self.assertEqual(walker.main(['--procs', '1', '--flush', '0']), 0)
+            self.assertEqual(walker.main(['--procs', '1', '--flush', '0',
+                                          '--payout', '0x' + 'ab' * 20]), 0)
         submitted = [call.kwargs['json'] for call in client.post.call_args_list if call.args[0] == '/api/submit']
         self.assertEqual([(b['steps_done'], b['abandoned']) for b in submitted], [(100, 3), (25, 1)])
         for body in submitted:

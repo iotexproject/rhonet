@@ -130,8 +130,16 @@ Credit matures one epoch at a time. An hour is long enough that a single-core
 contributor has something in most epochs, and short enough that a ten-day round has
 240 settlement points rather than a cliff at the end.
 
-Ten minutes to answer a challenge assumes a client polling `/api/audit/targets`
-about once a minute, with room for a restart in between. Silence across three
+Ten minutes is the *base* window. The deadline an identity actually gets is
+`audit_response_seconds + challenges_owed / 2`, because an identity that submitted
+more owes more openings, and each opening is a round trip and a replay. A flat
+window silently demands an unbounded answer rate from the largest contributor,
+which is the failure a launch rehearsal produced: two honest walkers, doing
+everything right, slashed for "silence" they could not have avoided. A contributor
+at 60 M steps/s owes about thirteen openings an hour and gets 606 seconds; one at
+6 G steps/s owes about 1,250 and gets twenty minutes. It assumes a client polling
+`/api/audit/targets` every twenty seconds or so, with room for a restart in
+between. Silence across three
 distinct epochs — three hours of ignoring challenges — costs the identity its
 standing. Silence before that only *withholds*: the steps stay on the balance and a
 late opening that verifies releases them. Destroying credit is reserved for an

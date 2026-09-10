@@ -91,7 +91,9 @@ What happens, in order:
 3. **It answers audits.** After each hour-long epoch, the coordinator challenges
    about one in thirty-two of your points and asks you to open one segment of the
    walk that produced it. Your client answers automatically. This is not optional
-   and it is where credit actually comes from.
+   and it is where credit actually comes from. The deadline scales with how many
+   openings you owe — ten minutes plus half a second per challenge — so
+   contributing more never means being given less time.
 
 ## 4. Read the board
 
@@ -132,7 +134,11 @@ the epoch containing that point has closed**, and do not exit on "solved" with
 challenges outstanding. Our own client got this wrong once and left an honest
 contributor unpaid for 1,536 points it had genuinely produced.
 
-Two other things a client must do, because they are the ones people get wrong:
+Three other things a client must do, because they are the ones people get wrong:
+
+- Answer *every* challenge in `GET /api/audit/targets`, and retry a `429` rather
+  than dropping the answer. The response carries the deadline; use it as your
+  retry budget.
 
 - Points refused for `quota` or `audit backlog` are **not** rejections. Resubmit
   them with the same `t` and the same coefficients — the response tells you which

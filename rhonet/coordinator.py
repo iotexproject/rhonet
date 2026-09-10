@@ -48,6 +48,9 @@ def _env_num(name, default, cast=float):
     return cast(os.environ.get(name, default))
 
 
+STATUS_CACHE_SECONDS = _env_num("RHONET_STATUS_CACHE_SECONDS", 1.0)
+
+
 # Per-key stops identity spam; the gate bounds work. Per-IP is a coarse guard
 # that allows a small fleet sharing a home IP to start together.
 TICKET_IP_RATE = _env_num("RHONET_TICKET_IP_RATE", 0.5)
@@ -58,6 +61,16 @@ SUBMIT_IP_RATE = _env_num("RHONET_SUBMIT_IP_RATE", 5)
 SUBMIT_IP_BURST = _env_num("RHONET_SUBMIT_IP_BURST", 20, int)
 SUBMIT_KEY_RATE = _env_num("RHONET_SUBMIT_KEY_RATE", 5)
 SUBMIT_KEY_BURST = _env_num("RHONET_SUBMIT_KEY_BURST", 20, int)
+# Answering an audit is an obligation with a deadline, so it must not share the
+# submission bucket: an identity owing hundreds of openings would be rate limited
+# into silence and slashed for it. The real cost here is the segment replay, which
+# AUDIT_GATE bounds independently, so this bucket only sheds malformed floods.
+AUDIT_IP_RATE = _env_num("RHONET_AUDIT_IP_RATE", 100)
+AUDIT_IP_BURST = _env_num("RHONET_AUDIT_IP_BURST", 400, int)
+AUDIT_KEY_RATE = _env_num("RHONET_AUDIT_KEY_RATE", 50)
+AUDIT_KEY_BURST = _env_num("RHONET_AUDIT_KEY_BURST", 200, int)
+# How fast we assume a client can answer, when deciding how long to give it.
+AUDIT_ANSWER_RATE = _env_num("RHONET_AUDIT_ANSWER_RATE", 2.0)
 TICKET_CONCURRENCY = _env_num("RHONET_TICKET_CONCURRENCY", 4, int)
 # Sync FastAPI waiters occupy threadpool threads; keep this queue modest.
 TICKET_QUEUE = _env_num("RHONET_TICKET_QUEUE", 64, int)
@@ -269,6 +282,7 @@ def now() -> float:
 class Coordinator:
     def __init__(self, spec: ec.RoundSpec, db_path: str):
         spec.validate()
+        self._status_cache = None
         self.beacon_url = os.environ.get("RHONET_BEACON_URL", "")
         if spec.funded and not self.beacon_url:
             raise ValueError("funded round requires RHONET_BEACON_URL")
@@ -832,16 +846,28 @@ class Coordinator:
                 "ORDER BY CAST(p.key AS INTEGER)",
                 (json.dumps(inputs[tag]["pairs"], separators=(",", ":")),)).fetchall()
         with self.lock:
-            deadline_key = f"audit_deadline:{idx}"
-            deadline = self._get_state(deadline_key)
-            if deadline is None:
-                deadline = now() + self.spec.audit_response_seconds
-                self._set_state(deadline_key, deadline)
+            # One flat window for every identity was wrong, and it slashed two
+            # honest walkers in rehearsal. An identity that submitted more owes
+            # more openings, and each opening is a round trip and a replay, so a
+            # fixed window silently demands an unbounded answer rate. Give each
+            # identity the base window plus time proportional to what we asked of
+            # it. Persisted with the plan, so a restart does not shorten it.
+            deadline_key = f"audit_deadlines:{idx}"
+            deadlines = self._get_state(deadline_key)
+            if not isinstance(deadlines, dict):
+                base = now() + self.spec.audit_response_seconds
+                owed = Counter(row[0] for row in targets)
+                deadlines = {pk: base + count / AUDIT_ANSWER_RATE for pk, count in owed.items()}
+                self._set_state(deadline_key, deadlines)
+                if owed:
+                    self.event("audit_window", {"epoch": idx, "challenges": sum(owed.values()),
+                                                "identities": len(owed),
+                                                "longest_seconds": round(max(deadlines.values()) - now())})
             for pk, t, x, y, a, b, steps in targets:
                 segments = (steps + (1 << self.spec.v) - 1) >> self.spec.v
                 segment = int.from_bytes(ec.H(root_bytes, beacon, "segment-v1", pk, t), "big") % segments
                 self.db.execute("INSERT OR IGNORE INTO challenges VALUES(?,?,?,?,?,NULL)",
-                                (idx, pk, t, segment, deadline))
+                                (idx, pk, t, segment, deadlines.get(pk, now() + self.spec.audit_response_seconds)))
             # Publishing entropy is safe now: all memberships and commitments
             # have been sealed and the plan is durable before any response.
             self.db.execute("UPDATE epochs SET beacon_reveal=? WHERE idx=?", (beacon.hex(), idx))
@@ -1186,6 +1212,24 @@ class Coordinator:
     # ---------------------------------------------------------------- reads
     @db_locked
     def status_view(self):
+        """Several aggregates, an epoch list and an ETA posterior. Every walker
+        polls it, so it is served from a one-second cache: the numbers are already
+        sampled over a sixty-second window and nothing here is a decision input."""
+        # Keyed on the write counter as well as the clock, so the cache only ever
+        # absorbs repeated reads. A contributor that just submitted and immediately
+        # asks for its balance sees the submission, not a second-old view of it.
+        # The epoch loop's failure count lives in memory, not in the database, so
+        # it goes in the key too: "degraded" is the one field a stale read would
+        # hide at exactly the moment somebody is looking for it.
+        key = (self.db.total_changes, self.epoch_loop_failures, self.status)
+        cached = self._status_cache
+        if cached is not None and cached[2] == key and now() - cached[0] < STATUS_CACHE_SECONDS:
+            return cached[1]
+        view = self._status_view()
+        self._status_cache = (now(), view, key)
+        return view
+
+    def _status_view(self):
         spec = self.spec
         current_epoch = self.current_epoch()
         total, n_dps, n_miners, n_active = self.db.execute(
@@ -1441,6 +1485,8 @@ def build_app(coord: Coordinator) -> FastAPI:
     ticket_key = RateLimiter(TICKET_KEY_RATE, TICKET_KEY_BURST)
     submit_ip = RateLimiter(SUBMIT_IP_RATE, SUBMIT_IP_BURST)
     submit_key = RateLimiter(SUBMIT_KEY_RATE, SUBMIT_KEY_BURST)
+    audit_ip = RateLimiter(AUDIT_IP_RATE, AUDIT_IP_BURST)
+    audit_key = RateLimiter(AUDIT_KEY_RATE, AUDIT_KEY_BURST)
 
     def limit(req, body, ip_limiter, key_limiter):
         if not ip_limiter.allow(req.client.host if req.client else "unknown"):
@@ -1484,7 +1530,7 @@ def build_app(coord: Coordinator) -> FastAPI:
 
     @app.post("/api/audit/open")
     def audit_open(req: Request, body: dict):
-        limit(req, body, submit_ip, submit_key)
+        limit(req, body, audit_ip, audit_key)
         body = dict(body)
         sig = body.pop("sig", "")
         Coordinator.verify_sig(body["pubkey"], body, sig)

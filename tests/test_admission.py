@@ -160,7 +160,7 @@ class AdmissionTests(unittest.TestCase):
                 patch.object(walker.mp, 'get_context', return_value=ctx), \
                 patch.object(walker.time, 'sleep'), patch.object(walker, 'post_with_retry', side_effect=retry), \
                 patch('sys.stderr') as stderr:
-            self.assertEqual(walker.main(['--key', str(Path(tmp) / 'key'), '--procs', '1', '--flush', '0']), 0)
+            self.assertEqual(walker.main(['--key', str(Path(tmp) / 'key'), '--procs', '1', '--flush', '0', '--payout', '0x' + 'ab' * 20]), 0)
         self.assertEqual(len(submitted), 2)
         for body in submitted:
             self.assertEqual((body['dps'], body['steps_done'], body['abandoned']), ([{'t': 7}], 123, 2))
@@ -187,7 +187,7 @@ class AdmissionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp, patch.object(walker.httpx, 'Client', return_value=client), \
                 patch.object(walker.ec, 'ticket_solve', return_value={'steps': 1, 'nonce': 0}), \
                 patch.object(walker.mp, 'get_context', return_value=ctx), patch('sys.stderr'):
-            self.assertEqual(walker.main(['--key', str(Path(tmp) / 'key'), '--procs', '1', '--flush', '0']), 0)
+            self.assertEqual(walker.main(['--key', str(Path(tmp) / 'key'), '--procs', '1', '--flush', '0', '--payout', '0x' + 'ab' * 20]), 0)
         self.assertEqual(submitted[0]['dps'], [{'t': 3}, {'t': 7}, {'t': 9}])
         self.assertEqual(submitted[1]['dps'], [{'t': 7}, {'t': 9}])
         self.assertEqual((submitted[1]['steps_done'], submitted[1]['abandoned']), (50, 1))

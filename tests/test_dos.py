@@ -39,7 +39,7 @@ class DosTests(unittest.TestCase):
         if "ticket" not in body:
             self._seq = body["seq"]
         body.update(round_id=self.spec.round_id, pubkey=key.public_key().public_bytes_raw().hex())
-        return dict(body, sig=key.sign(ec.canonical(body)).hex())
+        return dict(body, sig=key.sign(ec.sign_bytes_for(body)).hex())
 
     def ticket_body(self, key, ticket):
         return self.signed(key, payout_addr='0x' + '11' * 20, ticket=ticket)

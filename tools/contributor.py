@@ -31,9 +31,10 @@ ADDR_RE = re.compile(r"^0x[0-9a-fA-F]{40}$")
 
 
 def statement(github: str, pubkey: str, payout: str) -> bytes:
-    """Exactly what is signed. Order and encoding are fixed by ec.canonical."""
-    return ec.canonical({"statement": STATEMENT, "github": github.lower(),
-                         "pubkey": pubkey.lower(), "payout": payout.lower()})
+    """Exactly what is signed: a length-prefixed encoding of an ordered field list,
+    so a client in any language can reproduce these bytes from the specification."""
+    return ec.sign_bytes_contributor(github.lower(), bytes.fromhex(pubkey.lower()),
+                                     bytes.fromhex(payout.lower().removeprefix("0x")))
 
 
 def sign(github: str, key_path: str, payout: str, device: str | None) -> dict:

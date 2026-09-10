@@ -158,7 +158,7 @@ footer{margin-top:72px;padding-top:18px;border-top:1px solid var(--line);color:v
 <main>
 
 <nav>
-  <span class="brand">rho<em>net</em></span>
+  <span class="brand">rho<em>net</em></span><span style="font-family:var(--mono);font-size:11px;color:var(--faint);letter-spacing:.1em;text-transform:uppercase;margin-left:14px">collective discovery</span>
   <span class="links">
     <a href="#board">leaderboard</a>
     <a href="#join">join</a>
@@ -173,6 +173,7 @@ footer{margin-top:72px;padding-top:18px;border-top:1px solid var(--line);color:v
   <div class="hero-in">
     <h1>Put your GPU on a bounty that has been open since <span>1997</span>.</h1>
     <p class="lede">Certicom's ECCp-131 challenge pays <b>$20,000</b> to whoever computes one discrete logarithm. It takes about <b>6.5 × 10<sup>19</sup></b> elliptic-curve steps, roughly three weeks of a thousand consumer GPUs. RhoNet is how strangers search it together: <b>every verified step earns credit, and whoever contributed shares the prize when the answer falls out.</b></p>
+    <p class="lede" style="font-size:15.5px">Volunteer computing has existed since SETI@home, and it has never been able to pay a stranger, because nobody could check what a stranger submitted. That is the part we built: work is verified by replaying a segment of it, so contribution is a fact rather than a claim, and the prize can be split by rule instead of by trust.</p>
     <a class="cta solid" href="#join">Join the search</a>
     <a class="cta" href="#board" style="margin-left:8px">See the board</a>
   </div>
@@ -223,10 +224,10 @@ footer{margin-top:72px;padding-top:18px;border-top:1px solid var(--line);color:v
 </section>
 
 <section id="join">
-  <div class="shead"><h2>Join</h2><span class="rule"></span><span class="note">three commands</span></div>
+  <div class="shead"><h2>Join</h2><span class="rule"></span><span class="note">bring a machine, or bring a faster client</span></div>
   <div class="panel" style="padding:20px">
-    <h3>Your machine admits itself, then starts walking.</h3>
-    <p style="color:var(--muted);font-size:14.5px;margin:0 0 14px">Admission is real curve work, so a rented botnet gets no advantage over an honest GPU. Credit accrues to the address you name and survives you switching the machine off.</p>
+    <h3>The reference client is slow on purpose. Beating it is part of the work.</h3>
+    <p style="color:var(--muted);font-size:14.5px;margin:0 0 14px">The coordinator verifies a submission by replaying a segment of the walk against the round specification. It has no opinion about how you produced it. So the Python client below is a <em>reference implementation</em>: it defines what correct means, not what fast means. Anyone is welcome to write a faster one, in any language, on any hardware, and every step it earns counts the same. Credit is proportional to verified work, so a better client is paid for being better.</p>
 <pre><span class="c"># clone, install, point a walker at an open search</span>
 git clone https://github.com/iotexproject/rhonet &amp;&amp; cd rhonet
 python3 -m venv .venv &amp;&amp; .venv/bin/pip install fastapi <span class="p">'uvicorn[standard]'</span> cryptography httpx
@@ -235,6 +236,12 @@ python3 -m venv .venv &amp;&amp; .venv/bin/pip install fastapi <span class="p">'
 <span class="c"># or run the whole system yourself: a fresh curve, a coordinator, three</span>
 <span class="c"># honest contributors and two forgers, solved and settled in about two minutes</span>
 ./demo.sh</pre>
+  </div>
+
+  <div class="grid" style="margin-top:14px">
+    <div class="card"><h3>What a client has to get right</h3><p>Derive its start points from the round and its own public key, follow the adding walk, submit distinguished points with a Merkle commitment to its checkpoint chain, sign the batch, and open a challenged segment on request. Nothing else is prescribed. The arithmetic, the batching, the memory layout and the hardware are yours.</p></div>
+    <div class="card"><h3>How you know yours is correct</h3><p>A published specification and conformance vectors: for a fixed round and identity, the intermediate states, the first distinguished point, its checkpoint root and the exact bytes of a signed submission. Run them and you know before you join, rather than finding out by being disqualified.</p></div>
+    <div class="card"><h3>How the competition is scored</h3><p>The board shows the client and the hardware alongside the credit, so a faster implementation is visible as well as paid. The reference client exists to be beaten; if the standing record is still Python, the round is telling you something.</p></div>
   </div>
 </section>
 

@@ -94,6 +94,9 @@ class HardeningTests(unittest.TestCase):
             del body[field]
             response = client.post('/api/submit', json=walker.signed(self.key, body))
             self.assertEqual(response.status_code, 400)
+        # Both sides of the freshness window are accepted. Epoch is unsigned on the
+        # wire, so advance the clock past the first epoch before testing one behind.
+        self.coord.started_at -= self.spec.epoch_seconds
         for seq, offset in enumerate((-1, 1)):
             body = self.body(seq=seq, dps=[])
             body['epoch'] += offset

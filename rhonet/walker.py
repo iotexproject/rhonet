@@ -126,8 +126,10 @@ def pubkey_hex(key: Ed25519PrivateKey) -> str:
 
 
 def signed(key: Ed25519PrivateKey, body: dict) -> dict:
+    """Sign the binary encoding of an explicit field list, not the JSON we send."""
     body = dict(body)
-    body["sig"] = key.sign(ec.canonical({k: v for k, v in body.items() if k != "sig"})).hex()
+    body.pop("sig", None)
+    body["sig"] = key.sign(ec.sign_bytes_for(body)).hex()
     return body
 
 

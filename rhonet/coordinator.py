@@ -402,14 +402,16 @@ class Coordinator:
     def verify_sig(pubkey_hex: str, body: dict, sig_hex: str):
         try:
             pk = Ed25519PublicKey.from_public_bytes(bytes.fromhex(pubkey_hex))
-            pk.verify(bytes.fromhex(sig_hex), ec.canonical(body))
-        except (ValueError, TypeError, InvalidSignature):
+            pk.verify(bytes.fromhex(sig_hex), ec.sign_bytes_for(body))
+        except (ValueError, TypeError, KeyError, InvalidSignature):
             raise HTTPException(401, "bad signature")
 
     def _check_freshness(self, pubkey, freshness):
         # Called under the DB lock; HTTP always supplies both signed fields.
         epoch, seq = freshness
-        if type(epoch) is not int or abs(epoch - self.current_epoch()) > 1:
+        # Epoch is unsigned on the wire, so the window is clamped at zero rather
+        # than reaching -1 in the first epoch of a round.
+        if type(epoch) is not int or epoch < 0 or abs(epoch - self.current_epoch()) > 1:
             raise HTTPException(400, "stale submission")
         if type(seq) is not int or not 0 <= seq < (1 << 63):
             raise HTTPException(400, "invalid seq")

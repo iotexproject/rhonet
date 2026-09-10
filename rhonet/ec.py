@@ -62,7 +62,84 @@ def H(*parts: object) -> bytes:
 
 
 def canonical(obj) -> bytes:
+    """Deterministic JSON. Retained for internal digests only, never for signatures.
+
+    Canonical JSON is a well-known source of cross-language signature failures:
+    integer versus string encoding of large values, unicode escaping, key ordering
+    over non-ASCII keys, and float formatting all differ between implementations.
+    Anything a second implementation has to reproduce byte for byte uses `encode`
+    below instead.
+    """
     return json.dumps(obj, sort_keys=True, separators=(",", ":")).encode()
+
+
+# --- the signed wire encoding -------------------------------------------------
+#
+# A signed message is a length-prefixed encoding of an explicit, ordered field
+# list. There is no key ordering to agree on, no escaping, and no number
+# formatting: every value is either a byte string or a non-negative integer, and
+# both have exactly one representation. An independent client can reproduce these
+# bytes from the specification alone, and the conformance vectors pin them down.
+#
+#   encode(domain, fields) =
+#       "rhonet-v1\0" || uvarint(len(domain)) || domain
+#                      || uvarint(len(fields))
+#                      || for each field: tag || uvarint(len(value)) || value
+#
+#   tag 0x00  bytes, verbatim
+#   tag 0x01  unsigned integer, minimal big-endian, empty for zero
+#   tag 0x02  UTF-8 text
+#   tag 0x03  a nested list, whose items are encoded by the same rules
+#
+# Field ORDER is part of the specification for each message type; a field is never
+# identified by name on the wire, so a client cannot accidentally agree on the
+# names while disagreeing on the bytes.
+
+WIRE_MAGIC = b"rhonet-v1\0"
+
+
+def uvarint(n: int) -> bytes:
+    if n < 0:
+        raise ValueError("uvarint is unsigned")
+    out = bytearray()
+    while True:
+        b = n & 0x7F
+        n >>= 7
+        out.append(b | (0x80 if n else 0))
+        if not n:
+            return bytes(out)
+
+
+def uint_bytes(n: int) -> bytes:
+    """Minimal big-endian. Zero encodes as empty, so there is one representation."""
+    if n < 0:
+        raise ValueError("field integers are unsigned")
+    return n.to_bytes((n.bit_length() + 7) // 8, "big")
+
+
+def _field(value) -> bytes:
+    if isinstance(value, bytes):
+        return b"\x00" + uvarint(len(value)) + value
+    if isinstance(value, bool):
+        raise TypeError("encode booleans as integers, so the intent is explicit")
+    if isinstance(value, int):
+        b = uint_bytes(value)
+        return b"\x01" + uvarint(len(b)) + b
+    if isinstance(value, str):
+        b = value.encode("utf-8")
+        return b"\x02" + uvarint(len(b)) + b
+    if isinstance(value, (list, tuple)):
+        inner = b"".join(_field(v) for v in value)
+        return b"\x03" + uvarint(len(inner)) + inner
+    raise TypeError(f"no wire encoding for {type(value).__name__}")
+
+
+def encode(domain: str, fields) -> bytes:
+    """The exact bytes that get signed. See the field order for each message type
+    in docs/PROTOCOL.md; the conformance vectors in spec/vectors.json pin them."""
+    d = domain.encode("utf-8")
+    body = b"".join(_field(v) for v in fields)
+    return WIRE_MAGIC + uvarint(len(d)) + d + uvarint(len(fields)) + body
 
 
 @dataclass(frozen=True)
@@ -644,3 +721,85 @@ def verify_segment(spec, table, pubkey, dp, segment, opening):
         return replay(spec, table, *states[0], work) == states[1], work
     except (KeyError, ValueError, TypeError, IndexError, OverflowError):
         return False, work
+
+
+# --- signed message types -----------------------------------------------------
+#
+# Each entry fixes a domain string and the exact order of the signed fields.
+# Adding a field means a new domain, never a silent change of meaning.
+
+def sign_bytes_admission(round_id: str, pubkey: bytes, payout: bytes, ticket_nonce: int,
+                         ticket_steps: int, ticket_x: int, epoch: int, seq: int,
+                         device: str) -> bytes:
+    return encode("rhonet/admission-v1",
+                  [round_id, pubkey, payout, ticket_nonce, ticket_steps, ticket_x,
+                   epoch, seq, device])
+
+
+def sign_bytes_submission(round_id: str, pubkey: bytes, epoch: int, seq: int,
+                          steps_done: int, abandoned: int, dps) -> bytes:
+    """`dps` is an ordered list; each point contributes its fields in this order,
+    so two clients that agree on the points cannot disagree on the bytes."""
+    items = [[_u(d.get("t")), _u(d.get("steps")), _u(d.get("x")), _u(d.get("y")),
+              _u(d.get("a")), _u(d.get("b")),
+              bytes.fromhex(str(d.get("checkpoint_root") or ""))]
+             for d in dps]
+    return encode("rhonet/submission-v1",
+                  [round_id, pubkey, epoch, seq, steps_done, abandoned, items])
+
+
+def sign_bytes_opening(round_id: str, pubkey: bytes, audit_epoch: int, t: int,
+                       segment: int, opening_digest: bytes) -> bytes:
+    return encode("rhonet/opening-v1",
+                  [round_id, pubkey, audit_epoch, t, segment, opening_digest])
+
+
+def sign_bytes_contributor(github: str, pubkey: bytes, payout: bytes) -> bytes:
+    """Binds a GitHub account to a walker key. Signed by the walker key; the pull
+    request proves the other half."""
+    return encode("rhonet/contributor-v1", [github, pubkey, payout])
+
+
+def _u(v) -> int:
+    """Coerce a wire value to a non-negative integer for encoding purposes only.
+    Range and sanity checks belong to the server, not to the signature."""
+    try:
+        n = int(v)
+    except (TypeError, ValueError):
+        return 0
+    return n if n >= 0 else 0
+
+
+def sign_bytes_for(body: dict) -> bytes:
+    """Pick the signed encoding from the message's shape.
+
+    Transport stays JSON, which is convenient and lossy; the signature covers the
+    binary encoding above, which is neither. A client that agrees with us about the
+    values cannot disagree about the signed bytes.
+    """
+    pubkey = bytes.fromhex(body["pubkey"])
+    rid = body["round_id"]
+    epoch = _u(body.get("epoch"))
+    seq = _u(body.get("seq"))
+    if "ticket" in body:
+        # A malformed message must still be signable, so that the server rejects it
+        # on its own validation rather than the client failing to encode it. Absent
+        # fields encode as zero, which is a value the server will refuse anyway.
+        t = body["ticket"] if isinstance(body.get("ticket"), dict) else {}
+        return sign_bytes_admission(rid, pubkey,
+                                    bytes.fromhex(str(body.get("payout_addr", "")).removeprefix("0x")),
+                                    _u(t.get("nonce")), _u(t.get("steps")), _u(t.get("x")),
+                                    epoch, seq, str(body.get("device") or ""))
+    if "dps" in body:
+        return sign_bytes_submission(rid, pubkey, epoch, seq,
+                                     _u(body.get("steps_done")), _u(body.get("abandoned")),
+                                     body["dps"] if isinstance(body.get("dps"), list) else [])
+    if "opening" in body:
+        return sign_bytes_opening(rid, pubkey, _u(body.get("audit_epoch")), _u(body.get("t")),
+                                  _u((body.get("opening") or {}).get("segment")),
+                                  H("opening", canonical(body["opening"])))
+    if "payout_addr" in body:  # signed address rotation
+        return encode("rhonet/rotate-v1",
+                      [rid, pubkey, bytes.fromhex(body["payout_addr"].removeprefix("0x")),
+                       epoch, seq])
+    raise ValueError("unknown signed message type")

@@ -98,7 +98,7 @@ class AdmissionTests(unittest.TestCase):
             # Invalid nonce is rejected cheaply by the real verifier.
             bodies = [walker.signed(key, dict(round_id=coord.spec.round_id, pubkey=pk,
                 payout_addr='0x' + '11' * 20, epoch=coord.current_epoch(), seq=i,
-                ticket=dict(nonce=-1, steps=1, x=0))) for i in range(600)]
+                ticket=dict(nonce=0, steps=1, x=0))) for i in range(600)]
             latencies = []
             with patch.object(ec, 'ticket_verify', wraps=ec.ticket_verify) as verify:
                 with concurrent.futures.ThreadPoolExecutor(16) as pool:

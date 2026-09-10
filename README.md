@@ -1,6 +1,8 @@
 # RhoNet
 
-**A crowd of Pollard rho walkers solving public elliptic-curve challenges together.**
+**Collective discovery for public cryptographic challenges.**
+
+A crowd searches, every step is verified by replay, and whoever contributed shares the prize.
 
 A walker is one Pollard rho path on a curve. RhoNet is a crowd of them: anyone with a
 GPU points it at a round, wanders the curve, and when any two walkers collide the whole crowd
@@ -29,9 +31,11 @@ are not mathematical:
 - **Nobody is paid until the end.** A round can run for months. Volunteers who leave early
   have historically gotten nothing.
 
-RhoNet is collective discovery for open cryptographic challenges. It borrows the accounting
-that mining pools got right (shares, proportional payout, pull-based claims) and adds what a
-public cryptanalytic challenge needs:
+Volunteer computing has existed since SETI@home, and it has never been able to pay a
+stranger, because nobody could check what a stranger submitted. That is the part this
+project builds. RhoNet borrows the accounting that mining pools got right (shares,
+proportional payout, pull-based claims) and adds what a public cryptanalytic challenge
+needs:
 permissionless admission through a curve-native ticket, sampled replay with slashing, and
 on-chain pro-rata settlement of a prize locked before the first step.
 
@@ -84,6 +88,27 @@ calldata every epoch. Decoupling that, a cheap root per epoch and one bound `set
 known follow-up. Abort is a condition rather than a decision: an external solve, a
 deadline, or coordinator silence must be provable on chain and callable by anyone, and each
 sponsor recovers their own deposit.
+
+## The reference client is not the fast client
+
+The coordinator verifies a submission by replaying a segment of the walk against the round
+specification. It has no opinion about how the submission was produced. The Python client in
+this repository therefore defines what *correct* means, not what *fast* means: it is a
+reference implementation and it is slow.
+
+Writing a faster client, in any language and on any hardware, is expected rather than
+tolerated. Credit is proportional to verified work, so a better implementation is paid for
+being better, and the board shows the client and the hardware next to the credit so the
+difference is visible. The protocol's own numbers make the size of the opportunity plain:
+one CPU core running this Python does roughly 0.7 million steps per second, and a hand-written
+two-limb Montgomery implementation in C should be twenty to thirty times that per core before
+anyone touches a GPU.
+
+What a client must get right is small and fully specified: derive start points from the round
+and its own public key, follow the adding walk, submit distinguished points with a Merkle
+commitment to its checkpoint chain, sign the batch, and open a challenged segment on request.
+A published specification and conformance vectors let an independent implementation prove
+itself correct before it joins a round.
 
 ## Run it
 

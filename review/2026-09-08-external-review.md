@@ -544,11 +544,33 @@ recording verbatim, because it is the process lesson rather than a code one:
 | F-9 | low, carried | No beacon-aware adversary in the test suite. | fixed: `tests/test_beacon_aware_adversary.py` |
 | F-10 | low | Residual inconsistencies; `r = 32` withdrawn on the merits. | resolved by F-2 and F-6 |
 
-**One correction to the review.** F-1 states the failure "comes after the client has
-minted an admission ticket". It does not: the client fetches `/api/round` before
-minting, so the work was never spent. What it did was fail with a Python traceback,
-which leaves a volunteer just as unable to tell a project-side outage from their own
-mistake. The proposed fix was right for the wrong reason, and is implemented.
+**Two corrections to the review.**
+
+F-1 states the failure "comes after the client has minted an admission ticket". It
+does not: the client fetches `/api/round` before minting, so the work was never
+spent. What it did was fail with a Python traceback, which leaves a volunteer just
+as unable to tell a project-side outage from their own mistake. The proposed fix was
+right for the wrong reason, and is implemented.
+
+F-3 states that measuring a negation map is "meaningless at 48 bits (variance swamps
+it)" and affordable only at 109. That is true of a single solve and false of a mean.
+`tools/calibrate.py` now measures it: 300 independent 40-bit solves pin the mean
+constant to ±2.8% in forty-six seconds on one machine, against a shift of 29% from
+1.25 to 0.886 — ten sigma, and 26 solves would suffice for three. The arithmetic is
+catchable long before 109. The rung is still right for the other two reasons the
+review gives, which are the ones that survive: it is the only step between 10¹⁴ and
+10¹⁹, and the only place a negation map gets exercised in a real kernel at real
+scale rather than in a reference implementation at toy scale.
+
+**One finding the review did not make, which was worse than most that it did.**
+Three of our own documents told a client that implementing the negation map was
+worth 1.41× and that a better client should do it. The negation map changes the step
+function, so a client that adopted it would walk a different pseudorandom function
+from the round, fail replay, and be slashed for a correct implementation of the
+wrong protocol. We were inviting contributors to destroy their own standing, in the
+same documents that promise their work will be paid for. It is now a declared round
+field that `RoundSpec` refuses to enable, and the step-function section of the
+specification says so where a client author is reading.
 
 **The lesson worth keeping.** The recurring defect in this project is no longer in
 the protocol; it is that the README, the served site and the contract header

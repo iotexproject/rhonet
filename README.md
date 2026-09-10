@@ -245,13 +245,15 @@ worked example that CI checks against the reference implementation on every push
    specification and the vectors are published so somebody else can, and the board shows the
    hardware next to the credit so a better client is visible as well as credited.
 4. **ECCp-109**, gated on that kernel. Not a record to redo — it fell in 2002 to 10,308
-   volunteers over 549 days — but the only affordable place to *measure* a negation map. A
-   broken negation map does not crash and does not change throughput; it silently costs the
-   1.41× it was meant to buy, and the only way to see that is to count steps to solution
-   against 0.886·√n. Meaningless at 48 bits where variance swamps it, about nine GPU-days at
-   109, and far too expensive to discover at 131. It is also the only rung between 10¹⁴ and
-   10¹⁹, so it is where the coordinator's decimal-text record format has to stop being
-   decimal text, ahead of the 10¹⁰ points a 131-bit round produces.
+   volunteers over 549 days — but the only rung between 10¹⁴ and 10¹⁹, which is where the
+   coordinator's decimal-text record format has to stop being decimal text, ahead of the
+   10¹⁰ points a 131-bit round produces. It is also where a negation map gets validated in
+   the real kernel at real scale. The *constant* is cheaper to check than that, and worth
+   checking early: a broken negation map does not crash and does not change throughput, it
+   only silently costs the 1.41× it was meant to buy. `tools/calibrate.py` pins the mean at
+   40 bits to ±2.8% with 300 solves in forty-six seconds, against a 29% shift — ten sigma,
+   and 26 solves would do for three. So the arithmetic is catchable long before 109; what
+   109 buys is everything that only appears at scale.
 5. **ECCp-131**: ~4.6 × 10¹⁹ steps, $20,000 posted by Certicom, open since 1997. Needs the
    kernel from step 3, the negation map measured at step 4, plus a USDC pool in the vault,
    and a route for a prize awarded to a named entity to reach a contract that pays strangers.

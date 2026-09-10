@@ -57,6 +57,17 @@ jobs:
           done
           exit $fail
 
+  vectors:
+    name: conformance vectors
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: pip install cryptography
+      - name: The published vectors must match the reference implementation
+        run: python -m tools.gen_vectors --check
+
   contracts:
     name: settlement contract
     runs-on: ubuntu-latest
@@ -72,7 +83,7 @@ jobs:
     name: deploy rhonet.dev
     # The site is never published from a red tree. Every check above must pass
     # first, and only a push to main deploys: pull requests build nothing.
-    needs: [contributors, audit-trail, tests, contracts]
+    needs: [contributors, audit-trail, tests, vectors, contracts]
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     concurrency:

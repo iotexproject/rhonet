@@ -233,8 +233,26 @@ def main(argv=None):
         return 2
     client = httpx.Client(base_url=args.coordinator, timeout=60)
 
-    spec_dict = client.get("/api/round").json()
-    spec = ec.RoundSpec.from_dict(spec_dict)
+    # Reach the coordinator before spending anything. Minting a ticket costs about
+    # 2^ticket_d steps -- twenty minutes of a core on Exercise 97 -- and a volunteer
+    # who spends that and then meets a DNS failure has no way to tell a project-side
+    # outage from a mistake of their own. Say which it is, before the cost.
+    try:
+        # A non-200 answers with something that is not a round, and is caught below
+        # as such; the distinction that matters to a volunteer is reachable or not.
+        spec_dict = client.get("/api/round").json()
+        spec = ec.RoundSpec.from_dict(spec_dict)
+    except httpx.HTTPError as exc:
+        print(f"[walker] cannot reach the coordinator at {args.coordinator}: "
+              f"{type(exc).__name__}.\n"
+              "         The round may not be open yet. Nothing has been computed and\n"
+              "         nothing has been lost. Check https://rhonet.dev for the round\n"
+              "         status, or pass --coordinator for a different one.", file=sys.stderr)
+        return 6
+    except (ValueError, KeyError, TypeError) as exc:
+        print(f"[walker] {args.coordinator} answered, but not with a round this client "
+              f"understands: {exc}", file=sys.stderr)
+        return 6
     table = ec.walk_table(spec)
     print(f"[walker] round {spec.round_id} ({spec.bits}-bit), w={spec.w}, expected {spec.expected_steps:.2e} steps; identity {pk[:16]}…", file=sys.stderr)
 
@@ -406,8 +424,17 @@ def main(argv=None):
                 sent_dps += res.get("accepted", 0)
                 credited_steps += res.get("accepted", 0) << spec.w
                 el = time.time() - started
+                # Show the ceiling when we are near it, so being ramped up does not
+                # look like being rejected.
+                capacity = ""
+                if res.get("quota") and res.get("quota_used", 0) >= 0.8 * res["quota"]:
+                    capacity = (f"  quota {res['quota_used']}/{res['quota']}"
+                                f" ({res.get('quota_source', 'slow-start')})")
+                if res.get("audit_backlog_limit") and res.get("audit_backlog", 0) >= (
+                        0.8 * res["audit_backlog_limit"]):
+                    capacity += f"  backlog {res['audit_backlog']}/{res['audit_backlog_limit']}"
                 print(f"[walker] {el:6.0f}s  local {fmt(steps_local/el)} steps/s  sent {sent_dps} DPs  credited {credited_steps/(1<<spec.credit_unit_log2):.3f} credits  "
-                      f"rejected {len(res.get('rejected', []))}  checked {res.get('checked', 0)}", file=sys.stderr)
+                      f"rejected {len(res.get('rejected', []))}{capacity}", file=sys.stderr)
                 if res.get("slashed"):
                     print(f"[walker] SLASHED: {res['rejected'][-1:] }", file=sys.stderr)
                     rc = 4

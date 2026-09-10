@@ -234,7 +234,15 @@ class RoundSpec:
 
     @property
     def segments_per_walk(self):
+        """Segments in the longest walk the round permits: the worst case."""
         return max(1, MAX_REPLAY_STEPS(self) // (1 << self.v))
+
+    @property
+    def segments_typical(self):
+        """Segments in a walk of expected length, 2^w steps. This is the number a
+        contributor actually meets; segments_per_walk is the cap, reached only by a
+        walk that ran to max_walk_len_log2."""
+        return max(1, (1 << self.w) // (1 << self.v))
 
     @property
     def detection(self):
@@ -257,15 +265,20 @@ class RoundSpec:
         a leaked seed and adaptively chosen submissions the bound is 1, which is
         why a funded round requires an external beacon.
         """
-        n, seg = self.spot_check_rate, self.segments_per_walk
+        n = self.spot_check_rate
+        typical, cap = self.segments_typical, self.segments_per_walk
         return {
             "sampling_rate": f"1 in {n}",
-            "segments_per_walk": seg,
+            "segments_typical": typical,
+            "segments_at_max_walk_length": cap,
             "escape_per_inconsistent_point": 1.0 - 1.0 / n,
-            "escape_per_broken_chain_point": 1.0 - 1.0 / (n * seg),
+            "escape_per_broken_chain_point": 1.0 - 1.0 / (n * typical),
+            "escape_per_broken_chain_point_at_max_walk_length": 1.0 - 1.0 / (n * cap),
             "note": ("Per point. An identity forging f points escapes with the f-th power, "
                      "so forging at scale is caught quickly; forging once is cheap to hide. "
-                     "Assumes an unpredictable audit seed."),
+                     "The broken-chain figure is quoted for a walk of expected length; a walk "
+                     "that ran to the cap has more segments and hides marginally better, while "
+                     "saving proportionally less. Assumes an unpredictable audit seed."),
         }
 
     @property

@@ -54,6 +54,10 @@ def _env_num(name, default, cast=float):
 # second: below one current GPU, and so a throttle on exactly the contributors the
 # round is trying to attract. Beyond the gate, the per-epoch quota still applies.
 MAX_AUDIT_BACKLOG_DPS = _env_num("RHONET_AUDIT_BACKLOG_DPS", 65536, int)
+# How far above last epoch's delivered work an identity's quota may reach. It is
+# bounded by work already accepted, so an identity earns headroom rather than
+# claiming it, and the backlog cap above is what actually protects the coordinator.
+QUOTA_THROUGHPUT_MULTIPLE = _env_num("RHONET_QUOTA_MULTIPLE", 16, int)
 
 
 STATUS_CACHE_SECONDS = _env_num("RHONET_STATUS_CACHE_SECONDS", 1.0)
@@ -533,10 +537,26 @@ class Coordinator:
             self.event("miner_admitted", {"pubkey": pubkey[:16], "ticket_steps": ticket["steps"], "verify_ms": round((time.time() - t0) * 1000)})
             return {"admitted": True, "already": False, "epoch": ep}
 
-    def quota(self, admitted_epoch: int) -> int:
-        """Slow start: doubles every epoch since admission, capped."""
+    def quota(self, admitted_epoch: int, pubkey: str = None) -> int:
+        """Slow start, paced by demonstrated throughput rather than by the calendar.
+
+        Doubling per epoch means an unknown identity starts small, which is the
+        point. But doubling from a CPU-sized base takes nine epochs to reach a
+        current GPU, and the first fast client to arrive is the most valuable event
+        that can happen to this round: nine hours mostly idle, with no explanation,
+        is a good way to lose it. So the ceiling also tracks what the identity
+        actually delivered last epoch, which reaches steady state in two or three
+        epochs on any hardware. Headroom is bounded by accepted, unslashed work: an
+        identity earns it rather than claiming it, and slashed rows do not count.
+        """
         age = max(0, self.current_epoch() - admitted_epoch)
-        return min(self.spec.quota_dps_per_epoch_base << min(age, 10), 1 << 30)
+        floor = self.spec.quota_dps_per_epoch_base << min(age, 10)
+        if pubkey is not None:
+            previous = self.db.execute(
+                "SELECT COUNT(*) FROM dps WHERE pubkey=? AND epoch=? AND slashed=0",
+                (pubkey, self.current_epoch() - 1)).fetchone()[0]
+            floor = max(floor, QUOTA_THROUGHPUT_MULTIPLE * previous)
+        return min(floor, 1 << 30)
 
     # ---------------------------------------------------------------- intake
     def submit(self, pubkey: str, dps: list[dict], steps_done=0, abandoned=0, freshness=None):
@@ -590,7 +610,7 @@ class Coordinator:
             ep = self.current_epoch()
             if epoch_dps_epoch != ep:
                 epoch_dps, epoch_dps_epoch = 0, ep
-            q = self.quota(admitted_epoch)
+            q = self.quota(admitted_epoch, pubkey)
 
             backlog = self.db.execute(
                 "SELECT COUNT(*) FROM dps WHERE pubkey=? AND checked=0 AND slashed=0 AND epoch NOT IN (SELECT idx FROM epochs WHERE audit_complete=1)", (pubkey,)).fetchone()[0]
@@ -700,7 +720,13 @@ class Coordinator:
             out = {"retry_indices": retry_indices,
                    "retry_after": min(2.0, self.spec.epoch_seconds) if retry_indices else 0,
                    "batch_limit": 1 if paused else max(1, min(256, MAX_AUDIT_BACKLOG_DPS - backlog, q - epoch_dps)),
-                   "accepted": accepted, "rejected": rejected, "checked": checked, "quota_left": q - epoch_dps, "epoch": ep}
+                   "accepted": accepted, "rejected": rejected, "checked": checked, "quota_left": q - epoch_dps, "epoch": ep,
+                   # A throttled client should be able to see that it is being
+                   # ramped up, not rejected, and roughly when it stops mattering.
+                   "quota": q, "quota_used": epoch_dps,
+                   "quota_source": "throughput" if q > (self.spec.quota_dps_per_epoch_base << min(
+                       max(0, ep - admitted_epoch), 10)) else "slow-start",
+                   "audit_backlog": backlog, "audit_backlog_limit": MAX_AUDIT_BACKLOG_DPS}
             if solved:
                 self._set_state("status", "settling")
                 self._set_state("pending_solution", solved)

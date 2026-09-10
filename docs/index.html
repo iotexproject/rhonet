@@ -4,6 +4,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>RhoNet</title>
+<!-- The one place this page states whether a round is live. "opening" means the
+     specification and client are published and the coordinator is not yet serving;
+     "open" asserts that api.rhonet.dev answers, and CI checks that it does. -->
+<meta name="rhonet-round-state" content="opening">
+<meta name="rhonet-round-id" content="exercise-97">
 <meta name="description" content="Collective discovery for open cryptographic challenges. Contribute GPU time to a public elliptic-curve search, earn credit for verified work, share the prize when the answer is found.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -172,11 +177,18 @@ footer{margin-top:72px;padding-top:18px;border-top:1px solid var(--line);color:v
   <canvas id="walk" aria-hidden="true"></canvas>
   <div class="hero-in">
     <h1>A public search you can join, on a problem from <span>1997</span>.</h1>
-    <p class="lede">RhoNet is running <b>Exercise 97</b>: Certicom's ECCp-97 challenge, the real curve, about <b>4.2 × 10<sup>14</sup></b> elliptic-curve steps. It was first solved in 1998 by 588 people over 53 days. <b>Every step you contribute is verified by replay, and the board says so in your name.</b></p>
+    <p class="lede">RhoNet's first public round is <b>Exercise 97</b>: Certicom's ECCp-97 challenge, the real curve, about <b>4.2 × 10<sup>14</sup></b> elliptic-curve steps. It was first solved in 1998 by 588 people over 53 days. <b>Every step you contribute is verified by replay, and the board says so in your name.</b></p>
     <p class="lede" style="font-size:15.5px">Volunteer computing has existed since SETI@home, and it has never been able to pay a stranger, because nobody could check what a stranger submitted. That is the part we built: work is verified by replaying a segment of it, so contribution is a fact rather than a claim, and a prize can be split by rule instead of by trust. Exercise 97 has no prize — it has a known answer, which is the point. Next is <b>ECCp-131</b>, unsolved, $20,000, open since 1997.</p>
     <a class="cta solid" href="#join">Join the search</a>
     <a class="cta" href="#board" style="margin-left:8px">See the board</a>
   </div>
+
+  <p class="lede" id="state" style="font-size:14.5px;font-family:var(--mono);color:var(--faint);margin-top:30px;max-width:74ch">
+    <b style="color:var(--ink);font-weight:500">Status: opening.</b> The coordinator is not serving yet, so the round cannot be joined today.
+    What is published is everything needed to be ready for it: the curve and its provenance, every round parameter with its
+    reasoning, the wire specification, and conformance vectors a client can check itself against before it ever connects.
+    This line, and the board below, become live figures the moment the coordinator answers.
+  </p>
 
   <div class="strip" id="strip">
     <div><div class="l">Round</div><div class="v" id="s-round"><span class="dot" id="s-dot"></span>exercise-97</div></div>
@@ -229,6 +241,8 @@ footer{margin-top:72px;padding-top:18px;border-top:1px solid var(--line);color:v
     <h3>The reference client is slow on purpose. Beating it is part of the work.</h3>
     <p style="color:var(--muted);font-size:14.5px;margin:0 0 14px">The coordinator verifies a submission by replaying a segment of the walk against the round specification. It has no opinion about how you produced it. So the Python client below is a <em>reference implementation</em>: it defines what correct means, not what fast means. It does 0.7–0.8 million steps per second per core, and there is no scenario in which that is a good number. Anyone is welcome to write a faster one, in any language, on any hardware, and every step it earns counts the same.</p>
 <pre><span class="c"># clone, install, register a github identity, walk</span>
+<span class="c"># (until the round opens the last command exits immediately, saying so;</span>
+<span class="c">#  it checks the coordinator before spending anything on a ticket)</span>
 git clone https://github.com/iotexproject/rhonet &amp;&amp; cd rhonet
 python3 -m venv .venv &amp;&amp; .venv/bin/pip install fastapi <span class="p">'uvicorn[standard]'</span> cryptography httpx
 .venv/bin/python -m tools.contributor sign --github <span class="p">&lt;you&gt;</span> --key walker.key \
@@ -261,7 +275,7 @@ python3 -m venv .venv &amp;&amp; .venv/bin/pip install fastapi <span class="p">'
   </ol>
   <div class="notice" style="margin-top:18px;border-left-color:var(--bad)">
     <b>What is not settled</b>
-    <p>Which rollup the vault lives on, who funds the pool before a round opens, and how a prize awarded to a named entity, as Certicom's is, reaches a contract that pays strangers. The settlement denominator is now bound on chain to the leaves the operator published, so it can no longer be understated, but nothing on chain checks that a leaf corresponds to work anyone actually did: an operator can still insert a leaf for itself and dilute every honest share. Leaves are public, so this is observable; it is not yet preventable. And settlement currently waits for every payable point to be replayed, which is affordable at demonstration scale and impossible at 131 bits.</p>
+    <p>Which rollup the vault lives on, who funds the pool before a round opens, and how a prize awarded to a named entity, as Certicom's is, reaches a contract that pays strangers. The settlement denominator is now bound on chain to the leaves the operator published, so it can no longer be understated, but nothing on chain checks that a leaf corresponds to work anyone actually did: an operator can still insert a leaf for itself and dilute every honest share. Leaves are public, so this is observable; it is not yet preventable. The cost caveat that does survive is on the contributor's side: you must keep your checkpoint chains until the epoch containing a point has closed, because a chain you cannot open is credit you cannot collect.</p>
 
 </section>
 
@@ -283,15 +297,15 @@ python3 -m venv .venv &amp;&amp; .venv/bin/pip install fastapi <span class="p">'
     <table>
       <thead><tr><th>Target</th><th class="r">Expected steps</th><th>Prize</th><th class="r">1,000 GPUs</th><th>Status</th></tr></thead>
       <tbody>
-        <tr><td>Certicom ECCp-97</td><td class="r num">4.2e14</td><td>solved 1998 by 588 volunteers</td><td class="r num">~10 s</td><td><span style="color:var(--accent)">open now</span></td></tr>
-        <tr><td>Certicom ECCp-109</td><td class="r num">3.2e16</td><td>solved 2002 by 10,308 volunteers</td><td class="r num">~13 min</td><td>skipped</td></tr>
+        <tr><td>Certicom ECCp-97</td><td class="r num">4.2e14</td><td>solved 1998 by 588 volunteers</td><td class="r num">~10 s</td><td><span style="color:var(--accent)">opening</span></td></tr>
+        <tr><td>Certicom ECCp-109</td><td class="r num">3.2e16</td><td>solved 2002 by 10,308 volunteers over 549 days</td><td class="r num">~13 min</td><td>after the first fast client</td></tr>
         <tr><td>Certicom ECCp-131</td><td class="r num">6.5e19</td><td>$20,000, open since 1997</td><td class="r num">~19 days</td><td>first public round</td></tr>
         <tr><td>Bitcoin puzzle #140</td><td class="r num">1.7e21</td><td>14 BTC, bearer</td><td class="r num">~480 days</td><td>needs a kangaroo walk</td></tr>
         <tr><td>Certicom ECCp-163</td><td class="r num">4.3e24</td><td>$30,000</td><td class="r num">~3,400 years</td><td>out of reach</td></tr>
       </tbody>
     </table>
   </div>
-  <p class="fine">Those GPU figures assume a kernel nobody has written yet. On the reference Python client, Exercise 97 is about seventy-nine eight-core machines running for ten days, and rho is a random process besides: there is a one-in-ten chance of finishing at 0.37× that and a one-in-ten chance of still running at 1.71×. The gap between those two rows is the whole invitation. Expected steps are 1.25·√n for the rho rows and 2·√(interval) for the kangaroo row. Rates assume 4×10<sup>10</sup> steps per second per card, extrapolated from published 256-bit kangaroo throughput and not yet measured on a 131-bit field. Solving 131 bits says nothing about the 256-bit curves securing your wallet; the gap is a factor of 2<sup>62</sup>.</p>
+  <p class="fine">The order is deliberate: <b>97</b> is the largest instance the reference client can actually finish, so it opens before any kernel exists. <b>109</b> is not a record to redo — it is the only affordable place to <em>measure</em> a negation map. A broken negation map does not crash and does not change throughput; it silently costs the 1.41× it was supposed to buy, and the only way to see that is to count steps to solution against 0.886·√n. That measurement is meaningless at 48 bits, where variance swamps it, affordable at 109 once a kernel exists, and far too expensive to discover at 131. It is also the only rung between 10<sup>14</sup> and 10<sup>19</sup>, which is where the coordinator's storage format has to stop being decimal text. Those GPU figures assume a kernel nobody has written yet. On the reference Python client, Exercise 97 is about seventy-nine eight-core machines running for ten days, and rho is a random process besides: there is a one-in-ten chance of finishing at 0.37× that and a one-in-ten chance of still running at 1.71×. The gap between those two rows is the whole invitation. Expected steps are 1.25·√n for the rho rows and 2·√(interval) for the kangaroo row. Rates assume 4×10<sup>10</sup> steps per second per card, extrapolated from published 256-bit kangaroo throughput and not yet measured on a 131-bit field. Solving 131 bits says nothing about the 256-bit curves securing your wallet; the gap is a factor of 2<sup>62</sup>.</p>
 </section>
 
 <section id="calibration">
@@ -366,6 +380,13 @@ python3 -m venv .venv &amp;&amp; .venv/bin/pip install fastapi <span class="p">'
     if (!status || !status.round) return;
 
     const open = status.status === "open";
+    const state = $("state");
+    if (state) state.innerHTML = '<b style="color:var(--ink);font-weight:500">Status: ' +
+      esc(status.status) + '.</b> ' + num(status.dps || 0) + ' points submitted, ' +
+      num(status.active_contributors || 0) + ' contributor' +
+      ((status.active_contributors === 1) ? '' : 's') + ' searching, ' +
+      si(status.steps_per_sec || 0) + ' steps per second. Everything below is read from the ' +
+      'coordinator, and every epoch it closes is published so you can recompute your own row.';
     $("s-dot").style.background = open ? "var(--accent)" : "var(--faint)";
     $("s-round").innerHTML = '<span class="dot" style="background:' + (open ? "var(--accent)" : "var(--faint)") +
       '"></span>' + esc(status.round.round_id) + (open ? "" : ' <small>' + esc(status.status) + "</small>");

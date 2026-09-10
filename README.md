@@ -8,13 +8,19 @@ A walker is one Pollard rho path on a curve. RhoNet is a crowd of them: anyone w
 GPU points it at a round, wanders the curve, and when any two walkers collide the whole crowd
 is paid pro rata for the work it actually did.
 
-Site: <https://rhonet.dev> · Board: <https://api.rhonet.dev/api/status> · Status: **Exercise 97 — Certicom's ECCp-97, the real curve**
+Site: <https://rhonet.dev> · Board: <https://api.rhonet.dev/api/status> · Status: **Exercise 97 is specified and opening** — the coordinator is not serving yet
 
 ---
 
-## Exercise 97 is open
+## Exercise 97: the first public round
 
-The current round is Certicom's **ECCp-97** challenge — the original parameters, taken from
+**Status: opening.** The coordinator is not serving yet, so the round cannot be joined
+today. Everything needed to be ready for it is published: the curve and its provenance, every
+parameter with its reasoning, the wire specification, and conformance vectors an independent
+client can check itself against before it ever connects. The client refuses to spend anything
+on an admission ticket until the coordinator answers, so trying early costs nothing.
+
+The round is Certicom's **ECCp-97** challenge — the original parameters, taken from
 the client that solved it in March 1998 ([provenance](rounds/eccp97.provenance.md)) — about
 **4.2 × 10¹⁴** elliptic-curve steps.
 
@@ -35,7 +41,8 @@ difficulty is real, the prize is not.
 | **Why these parameters** | [docs/ROUND-97.md](docs/ROUND-97.md) |
 | **Run the coordinator** | [docs/OPERATIONS.md](docs/OPERATIONS.md) |
 
-After this: **ECCp-131**, unsolved since 1997, $20,000, and about 10⁵ times the work.
+After this: **ECCp-109** once a fast client exists, to measure the negation map at a
+scale where it is measurable; then **ECCp-131**, unsolved since 1997, $20,000.
 
 ## Why
 
@@ -105,14 +112,14 @@ the identity, zeroes its credits and blocks re-admission under that key. Both si
 candidate collision are replayed before `k` is trusted.
 
 **Settlement is pull-based.** Every epoch the coordinator posts one Merkle root of
-`(payout address, credited steps)`. After the solve it posts the final root and the total;
-each contributor sends one `claim(steps, proof)` transaction, so no operator gas is spent per
-payout. Binding the denominator does cost the operator: `postRoot` now carries the full leaf
-set so the contract can reconstruct the root itself, which is O(number of contributors) in
-calldata every epoch. Decoupling that, a cheap root per epoch and one bound `settle`, is a
-known follow-up. Abort is a condition rather than a decision: an external solve, a
-deadline, or coordinator silence must be provable on chain and callable by anyone, and each
-sponsor recovers their own deposit.
+`(payout address, credited steps)`, at O(1) gas. Leaf totals are bound to that root exactly
+once, at settlement, so the denominator cannot be understated and the operator does not pay
+per-epoch calldata for the guarantee. After the solve, each contributor sends one
+`claim(steps, proof)` transaction, so no operator gas is spent per payout. The residual
+tradeoff is that an auditor needs the leaves off chain during the challenge window; they are
+published. Abort is a condition rather than a decision: an external solve, a deadline, or
+coordinator silence must be provable on chain and callable by anyone, and each sponsor
+recovers their own deposit.
 
 ## The reference client is not the fast client
 
@@ -224,19 +231,26 @@ worked example that CI checks against the reference implementation on every push
    1,200 solves, and the table above)*
 2. **Exercise 97**: Certicom's real 97-bit curve, ~4.2 × 10¹⁴ steps, no prize and a known
    answer. Calibrates quotas, epoch size, replay rate and the audit under real contributors,
-   against a result we can check. *(you are here)*
+   against a result we can check. *(specified and opening — you are here)*
 3. **A faster client.** The reference implementation is Python at ~0.7 M steps/s per core.
    A C or Metal or CUDA kernel with batched Montgomery inversion should be worth ten to
    thirty times that, and the negation map another 1.41×. We are not writing it: the
    specification and the vectors are published so somebody else can, and the board shows the
    hardware next to the credit so a better client is visible as well as credited.
-4. **ECCp-131**: ~4.6 × 10¹⁹ steps, $20,000 posted by Certicom, open since 1997. Needs the
-   kernel from step 3 and a measurement of its real 131-bit throughput — the number the whole
-   schedule depends on — plus a USDC pool in the vault, and a route for a prize awarded to a
-   named entity to reach a contract that pays strangers.
-5. **v2 coordinator**: staked committee, each member running its own intake bucket, syncing
+4. **ECCp-109**, gated on that kernel. Not a record to redo — it fell in 2002 to 10,308
+   volunteers over 549 days — but the only affordable place to *measure* a negation map. A
+   broken negation map does not crash and does not change throughput; it silently costs the
+   1.41× it was meant to buy, and the only way to see that is to count steps to solution
+   against 0.886·√n. Meaningless at 48 bits where variance swamps it, about nine GPU-days at
+   109, and far too expensive to discover at 131. It is also the only rung between 10¹⁴ and
+   10¹⁹, so it is where the coordinator's decimal-text record format has to stop being
+   decimal text, ahead of the 10¹⁰ points a 131-bit round produces.
+5. **ECCp-131**: ~4.6 × 10¹⁹ steps, $20,000 posted by Certicom, open since 1997. Needs the
+   kernel from step 3, the negation map measured at step 4, plus a USDC pool in the vault,
+   and a route for a prize awarded to a named entity to reach a contract that pays strangers.
+6. **v2 coordinator**: staked committee, each member running its own intake bucket, syncing
    only the replayed sample. Needed before a bearer-asset round.
-6. **A bearer-asset round** (a Bitcoin puzzle) needs two things this code does not have: a
+7. **A bearer-asset round** (a Bitcoin puzzle) needs two things this code does not have: a
    Pollard kangaroo implementation, since a bounded interval is a different walk with a
    different collision equation, and a way to resolve the collision without any single party
    learning `k` first. Puzzle #135 was taken by a single solver on 28 July 2026; the community

@@ -102,10 +102,22 @@ Cheating once is cheap to hide. Cheating at any scale worth cheating at is not, 
 being caught forfeits every unmatured credit the identity holds. That asymmetry —
 not a per-point guarantee — is what makes the accounting work.
 
-The other case, a chain that verifies everywhere except one segment, escapes with
-probability `1 - 1/(32 · 4096)`. It is a far weaker bound and it is the one we
-quote publicly, but building such a chain requires doing every step except 2²⁰ of
-2²⁹ — 0.2% saved — so nobody will.
+The other case, a chain that verifies everywhere except one segment, escapes
+unless the segment we open is the broken one. A walk of expected length has
+2²⁹ / 2²⁰ = **512 segments**, so that point escapes with probability
+`1 − 1/(32 · 512)`, or 1 in 16,384 caught. A walk that ran all the way to the cap
+at `max_walk_len_log2` has 2³² / 2²⁰ = 4,096 segments and hides eight times better,
+at `1 − 1/(32 · 4096)`; that is the worst case, and it is worth stating separately
+rather than quoting as if it were typical.
+
+Both figures are far weaker than the first case, and both are beside the point:
+building such a chain requires doing every step except 2²⁰ of 2²⁹ — 0.2% saved —
+so nobody will. The attack that is worth attempting is the cheap one, and the
+cheap one is caught at 1 in 32.
+
+Every number in this section is recomputed from `rounds/eccp97.json` by
+`tests/test_published_numbers.py`, so a parameter change that this prose does not
+follow fails the build rather than surviving into a review.
 
 Both bounds assume the audit entropy is unpredictable when the batch is sealed.
 This exercise uses commit–reveal; a funded round must use an external beacon bound

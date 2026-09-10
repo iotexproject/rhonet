@@ -1,5 +1,6 @@
 """Fleet admission, flood shedding and miner retries; direct or pytest execution."""
 import concurrent.futures
+import io
 import itertools
 import queue
 import socket
@@ -240,6 +241,32 @@ class AdmissionTests(unittest.TestCase):
                 raise ValueError('verification failed')
         with gate.enter():
             pass
+
+
+    def test_unreachable_coordinator_costs_nothing_and_says_so(self):
+        """A volunteer must never spend ticket work on a host that is not there.
+
+        An admission ticket is roughly 2^ticket_d steps -- twenty minutes of a core
+        on Exercise 97. Someone who spends that and then meets a DNS failure has no
+        way to tell a project-side outage from a mistake of their own, so the client
+        checks the coordinator before it computes anything, and says which it is.
+        """
+        client = Mock()
+        client.get.side_effect = httpx.ConnectError("Domain name not found")
+        errors = io.StringIO()
+        with tempfile.TemporaryDirectory() as tmp, \
+                patch.object(walker.httpx, 'Client', return_value=client), \
+                patch.object(walker.ec, 'ticket_solve') as mint, \
+                patch.object(sys, 'stderr', new=errors):
+            code = walker.main(['--coordinator', 'https://api.example.invalid',
+                                '--key', str(Path(tmp) / 'key'),
+                                '--payout', '0x' + 'ab' * 20])
+        self.assertEqual(code, 6)
+        mint.assert_not_called()
+        message = errors.getvalue()
+        self.assertIn('cannot reach the coordinator', message)
+        self.assertIn('nothing has been lost', message)
+        self.assertEqual(client.post.call_count, 0)
 
 
 if __name__ == '__main__':

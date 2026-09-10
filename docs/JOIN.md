@@ -6,6 +6,13 @@ verifiable record, a real benchmark, and an open invitation to beat our client.
 
 Five minutes to read; about half an hour before your first point appears.
 
+> **The round has not opened yet.** The coordinator is not serving, so step 3 will
+> exit immediately and tell you so. It checks before spending anything, so nothing
+> is lost by trying. Steps 1 and 2 work now, and so does everything in section 6 —
+> the specification and the vectors are published, which means a client can be
+> written and proved correct before the round exists to run it against.
+> Current status is on <https://rhonet.dev>.
+
 ---
 
 ## What you are actually doing
